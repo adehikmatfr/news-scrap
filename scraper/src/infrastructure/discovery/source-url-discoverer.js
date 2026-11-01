@@ -7,7 +7,7 @@ import { fetchFeedLinks } from './rss-feed.js';
 export class SourceUrlDiscoverer {
   /**
    * @param {object} deps
-   * @param {import('../browser/agent-browser-cli.js').AgentBrowserCli} deps.browser
+   * @param {import('../browser/browser-driver.js').BrowserDriver} deps.browser
    * @param {string} deps.userAgent
    * @param {string} deps.timezone           zona waktu untuk `{date}`
    * @param {number} [deps.delayMs]          jeda antar halaman indeks

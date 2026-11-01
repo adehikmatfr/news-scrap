@@ -34,6 +34,86 @@
       "maxArticles": 10,
       "preferAllPage": true,
       "maxPages": 10
+    },
+    {
+      "name": "cnnindonesia",
+      "schedule": "*/20 * * * *",
+      "discovery": { "type": "rss", "url": "https://www.cnnindonesia.com/rss" },
+      "pattern": "cnnindonesia\\.com/",
+      "minWords": 50,
+      "maxArticles": 10,
+      "preferAllPage": true,
+      "maxPages": 10
+    },
+    {
+      "name": "detik",
+      "schedule": "*/15 * * * *",
+      "discovery": { "type": "rss", "url": "https://news.detik.com/berita/rss" },
+      "pattern": "detik\\.com/",
+      "minWords": 50,
+      "maxArticles": 10,
+      "preferAllPage": true,
+      "maxPages": 10
+    },
+    {
+      "name": "tribunnews",
+      "schedule": "*/20 * * * *",
+      "discovery": { "type": "rss", "url": "https://www.tribunnews.com/rss" },
+      "pattern": "tribunnews\\.com/",
+      "minWords": 50,
+      "maxArticles": 10,
+      "preferAllPage": true,
+      "maxPages": 10
+    },
+    {
+      "name": "liputan6",
+      "schedule": "*/20 * * * *",
+      "discovery": { "type": "rss", "url": "https://feed.liputan6.com/rss/news" },
+      "pattern": "liputan6\\.com/",
+      "minWords": 50,
+      "maxArticles": 10,
+      "preferAllPage": true,
+      "maxPages": 10
+    },
+    {
+      "name": "sindonews",
+      "schedule": "0 * * * *",
+      "discovery": { "type": "rss", "url": "https://www.sindonews.com/feed" },
+      "pattern": "sindonews\\.com/",
+      "minWords": 50,
+      "maxArticles": 10,
+      "preferAllPage": true,
+      "maxPages": 10
+    },
+    {
+      "name": "cnbcindonesia",
+      "schedule": "*/20 * * * *",
+      "discovery": { "type": "rss", "url": "https://www.cnbcindonesia.com/news/rss" },
+      "pattern": "cnbcindonesia\\.com/",
+      "minWords": 50,
+      "maxArticles": 10,
+      "preferAllPage": true,
+      "maxPages": 10
+    },
+    {
+      "name": "okezone",
+      "schedule": "*/20 * * * *",
+      "discovery": { "type": "rss", "url": "https://sindikasi.okezone.com/index.php/rss/0/RSS2.0" },
+      "pattern": "okezone\\.com/",
+      "minWords": 50,
+      "maxArticles": 10,
+      "preferAllPage": true,
+      "maxPages": 10
+    },
+    {
+      "name": "viva",
+      "schedule": "0 * * * *",
+      "discovery": { "type": "rss", "url": "https://www.viva.co.id/get/all" },
+      "pattern": "viva\\.co\\.id/",
+      "minWords": 50,
+      "maxArticles": 10,
+      "preferAllPage": true,
+      "maxPages": 10
     }
   ]
 }

@@ -1,9 +1,9 @@
-// Implementasi port PageReader: buka halaman lewat agent-browser,
+// Implementasi port PageReader: buka halaman lewat driver browser,
 // lalu jalankan skrip ekstraksi di dalam halaman tersebut.
 const EXTRACTOR_SCRIPT = `${import.meta.dir}/scripts/extract-article.js`;
 
 export class BrowserPageReader {
-  /** @param {import('./agent-browser-cli.js').AgentBrowserCli} browser */
+  /** @param {import('./browser-driver.js').BrowserDriver} browser */
   static async create(browser) {
     return new BrowserPageReader(browser, await Bun.file(EXTRACTOR_SCRIPT).text());
   }

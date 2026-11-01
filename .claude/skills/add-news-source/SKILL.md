@@ -36,7 +36,7 @@ Periksa: `title`, `published_at`, `authors`, `content_text` (bandingkan dengan h
 
 - Isi kosong atau pendek → mungkin dirender JavaScript: cari selector isi lalu set `waitFor`.
 - Ada `pagination.pages` → pastikan versi "all" atau halaman lanjutan memberi isi lengkap.
-- Jika selector isi tidak dikenali ekstraktor, tambahkan ke `bodySelectors` di `extract-article.js` (tetap generik, jangan merusak situs lain).
+- Ekstraktor memilih wadah isi dari daftar selector umum ditambah skor kepadatan paragraf, jadi sebagian besar situs tidak perlu selector baru. Jika isi tetap salah, tambahkan pola yang generik ke `bodySelectors` atau ke filter `NOISE_CLASS`/`NOISE_LINE` di `extract-article.js`, lalu ukur ulang semua sumber dengan `bun run bench:accuracy --urls <hasil sebelumnya>` supaya situs lain tidak rusak. Tambahkan juga entri situs baru ke tabel `REFERENCE` di `tools/compare-with-source.js`.
 
 ## 4. Tambahkan ke config dan uji end-to-end
 

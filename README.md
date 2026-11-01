@@ -19,8 +19,9 @@ flowchart LR
 - **Pengiriman andal:** ID artikel stabil (`Idempotency-Key`), retry dengan jeda bertahap untuk `408`/`429`/`5xx`, dan artikel baru dicatat terkirim setelah penerima membalas `2xx`.
 - **Tanpa duplikat:** artikel yang sudah terkirim dilewati pada jalan berikutnya.
 - **Server dengan jadwal cron per sumber:** setiap sumber punya `schedule` sendiri (mis. tiap 15 menit, tiap jam), dijalankan bergiliran lewat antrean serial, dengan `GET /health`, `GET /status`, dan graceful shutdown.
+- **Driver browser bisa dipilih:** agent-browser (default), Playwright, atau CDP langsung dari Bun, lewat env `BROWSER_DRIVER`; ketiganya memakai ekstraktor yang sama.
 - **Tanpa token AI:** seluruh alur deterministik; agent-browser hanya alat otomasi browser.
-- **Tanpa dependency npm:** hanya API Bun; clean architecture dengan unit test `bun:test`.
+- **Hampir tanpa dependency:** hanya API Bun, ditambah `playwright-core` yang dipakai jika driver `playwright` dipilih; clean architecture dengan unit test `bun:test`.
 
 ## Mulai cepat
 
@@ -75,7 +76,7 @@ Daftar field lengkap, header, dan perilaku terhadap setiap status respons ada di
 | Path | Isi |
 |---|---|
 | [`scraper/`](scraper/) | Kode scraper (Bun), konfigurasi, test, dan penerima tiruan. Dokumentasi utama: [scraper/README.md](scraper/README.md) |
-| [`docs/adr/`](docs/adr/) | Architecture Decision Record: [ADR-0001 agent-browser di server](docs/adr/0001-penggunaan-agent-browser-di-server.md), [ADR-0002 server dengan jadwal cron per sumber](docs/adr/0002-scraper-sebagai-server-dengan-jadwal-cron-per-sumber.md) |
+| [`docs/adr/`](docs/adr/) | Architecture Decision Record: [ADR-0001 agent-browser di server](docs/adr/0001-penggunaan-agent-browser-di-server.md), [ADR-0002 server dengan jadwal cron per sumber](docs/adr/0002-scraper-sebagai-server-dengan-jadwal-cron-per-sumber.md), [ADR-0003 driver browser: agent-browser, Playwright, atau CDP](docs/adr/0003-driver-browser-agent-browser-playwright-atau-cdp.md) |
 | [`docs/reserch/`](docs/reserch/) | Riset perbandingan tools scraping berita |
 | [`.claude/`](.claude/) | Konteks dan skill untuk Claude Code: aturan project, gaya komentar, penulisan dokumen, cara menambah sumber berita |
 
@@ -91,7 +92,8 @@ Sumber baru ditambahkan di `scraper/config.json`. Periksa `robots.txt` dan ToS s
 ## Status
 
 - Diuji di Windows 11 dengan Bun 1.4.4, agent-browser 0.41.1, dan Chrome 156 (1 November 2026).
-- Instalasi dan operasi di server Linux atau Docker **belum diuji**; rancangannya ada di [ADR-0001](docs/adr/0001-penggunaan-agent-browser-di-server.md).
+- Driver `playwright` dan `cdp` lolos uji integrasi dengan halaman lokal di Windows dan di Docker Linux; ketiga driver menghasilkan payload identik pada dry-run antaranews (2 November 2026). Rinciannya di [scraper/README.md: Driver browser](scraper/README.md#driver-browser).
+- Instalasi dan operasi penuh di server Linux atau Docker **belum diuji**; rancangannya ada di [ADR-0001](docs/adr/0001-penggunaan-agent-browser-di-server.md) dan [ADR-0003](docs/adr/0003-driver-browser-agent-browser-playwright-atau-cdp.md).
 - Masalah kualitas data yang diketahui (sisa "Baca juga:", paragraf promosi, penulis berisi nama penerbit) tercantum di [scraper/README.md: Catatan](scraper/README.md#catatan).
 
 ## Etika dan hukum

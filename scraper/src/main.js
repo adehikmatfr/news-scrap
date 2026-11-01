@@ -7,6 +7,7 @@ import { ScrapeSource } from './application/scrape-source.js';
 import { SourceRunQueue } from './application/source-run-queue.js';
 import { AgentBrowserCli } from './infrastructure/browser/agent-browser-cli.js';
 import { BrowserPageReader } from './infrastructure/browser/browser-page-reader.js';
+import { CdpDriver } from './infrastructure/browser/cdp-driver.js';
 import { loadConfig } from './infrastructure/config/load-config.js';
 import { SourceUrlDiscoverer } from './infrastructure/discovery/source-url-discoverer.js';
 import { StatusServer } from './infrastructure/http/status-server.js';
@@ -40,6 +41,21 @@ function selectSources(config, name) {
   const source = config.sources.find((s) => s.name === name);
   if (!source) throw new Error(`unknown source "${name}" (available: ${config.sources.map((s) => s.name).join(', ')})`);
   return [source];
+}
+
+// Playwright di-import dinamis supaya driver lain tidak butuh paketnya (ADR-0003).
+/** @returns {Promise<import('./infrastructure/browser/browser-driver.js').BrowserDriver>} */
+async function createBrowserDriver({ browser, session }) {
+  switch (browser.driver) {
+    case 'cdp':
+      return new CdpDriver(browser);
+    case 'playwright': {
+      const { PlaywrightDriver } = await import('./infrastructure/browser/playwright-driver.js');
+      return new PlaywrightDriver(browser);
+    }
+    default:
+      return new AgentBrowserCli({ session });
+  }
 }
 
 async function buildQueue(config, { dryRun, logger, browser }) {
@@ -129,12 +145,13 @@ async function main() {
   const logger = createJsonLogger();
   const config = await loadConfig(opts.config);
   const sources = selectSources(config, opts.source);
-  const browser = new AgentBrowserCli({ session: config.session });
+  const browser = await createBrowserDriver(config);
   const queue = await buildQueue(config, { dryRun: opts.dryRun, logger, browser });
 
   logger.info('starting', {
     mode: opts.once ? 'once' : 'server',
     sources: sources.map((s) => s.name),
+    browserDriver: config.browser.driver,
     webhook: `${config.webhook.method} ${config.webhook.url}`,
     dryRun: opts.dryRun,
   });

@@ -1,6 +1,6 @@
 # News Scraper (agent-browser → webhook)
 
-Mengambil berita (URL, metadata, isi penuh, URL gambar) lewat **agent-browser**, lalu mengirim setiap artikel ke sistem luar melalui **HTTP POST/PATCH/PUT**. Sistem penerima bebas (Go, PHP, n8n, dan lainnya); syaratnya hanya bisa menerima JSON lewat HTTP.
+Mengambil berita (URL, metadata, isi penuh, URL gambar) lewat Chrome yang dikendalikan **agent-browser** (default), **Playwright**, atau **CDP langsung** (lihat [Driver browser](#driver-browser)), lalu mengirim setiap artikel ke sistem luar melalui **HTTP POST/PATCH/PUT**. Sistem penerima bebas (Go, PHP, n8n, dan lainnya); syaratnya hanya bisa menerima JSON lewat HTTP.
 
 Scraper berjalan sebagai **server** yang hidup terus: setiap sumber dijalankan sesuai jadwal cron-nya sendiri, dan kondisinya bisa dilihat lewat `GET /health` dan `GET /status`.
 
@@ -10,7 +10,7 @@ flowchart LR
     A --> B["Daftar URL artikel"]
     B --> C{"Sudah terkirim?"}
     C -- ya --> X["Dilewati"]
-    C -- belum --> D["agent-browser + Chrome<br/>menjalankan extract-article.js"]
+    C -- belum --> D["Driver browser + Chrome<br/>menjalankan extract-article.js"]
     D --> E{"Judul ada dan<br/>kata ≥ minWords?"}
     E -- tidak --> F["Gagal: dicoba lagi<br/>pada jalan berikutnya"]
     E -- ya --> G["Kirim JSON ke<br/>sistem penerima"]
@@ -102,14 +102,21 @@ agent-browser **tidak memakai AI atau token AI**; ia alat otomasi browser. Kata 
 
 | Komponen | Versi teruji | Keterangan |
 |---|---|---|
-| [Bun](https://bun.sh) | 1.4.4 | Runtime scraper (`engines.bun >= 1.4.4` karena `Bun.cron`); tanpa dependency, tidak perlu `bun install` |
-| agent-browser | 0.41.1 | Dipasang lewat npm, jadi Node.js/npm juga dibutuhkan |
-| Chrome for Testing | 156 | Diunduh oleh `agent-browser install` |
+| [Bun](https://bun.sh) | 1.4.4 | Runtime scraper (`engines.bun >= 1.4.4` karena `Bun.cron`) |
+| agent-browser | 0.41.1 | Hanya untuk driver `agent-browser` (default). Dipasang lewat npm, jadi Node.js/npm juga dibutuhkan |
+| `playwright-core` | 1.64.1 | Hanya untuk driver `playwright`. Satu-satunya dependency di `package.json`; dipasang dengan `bun install` |
+| Chrome for Testing | 156 | Diunduh oleh `agent-browser install`. Driver `playwright` dan `cdp` bisa memakai Chrome yang sama lewat `CHROME_PATH` |
 
 ```bash
+# Driver agent-browser (default)
 npm install -g agent-browser@0.41.1
 agent-browser install            # Linux: agent-browser install --with-deps (belum diuji)
+
+# Driver playwright: pasang dependency
+bun install
 ```
+
+Driver `cdp` tidak butuh paket apa pun, hanya biner Chrome.
 
 ## Menjalankan
 
@@ -120,6 +127,8 @@ bun start           # mode server: jadwalkan setiap sumber, buka /health dan /st
 bun run once        # semua sumber sekali jalan lalu keluar
 bun run dry-run     # sekali jalan: tampilkan payload, tidak mengirim, tidak menulis state
 bun test            # unit test bun:test (tanpa browser dan jaringan)
+bun run bench       # benchmark driver browser (lihat "Benchmark driver browser")
+bun run bench:accuracy  # akurasi ekstraksi terhadap halaman asli
 ```
 
 Setara dengan `bun src/main.js [--once] [--dry-run] [--source <nama>] [--config <path>]`:
@@ -143,6 +152,35 @@ bun run once        # terminal 2: payload tersimpan di data/received.jsonl
 
 `--dry-run` tetap membaca `data/sent.json`, jadi artikel yang sudah terkirim ikut dilewati.
 
+### Benchmark driver browser
+
+```bash
+CHROME_PATH=<path chrome> bun run bench --sources detik,liputan6 --articles 3
+```
+
+`tools/compare-drivers.js` mengambil daftar URL dari RSS satu kali, lalu membuka setiap URL dengan semua driver secara bergiliran. Hasilnya berupa tabel ringkasan (berhasil, mulai dingin, median, p95, puncak memori Chrome) dan kesetaraan isi antar driver. Tidak ada payload yang dikirim, `statePath` tidak dibaca maupun ditulis, dan jadwal cron tidak dipakai.
+
+| Argumen | Default | Fungsi |
+|---|---|---|
+| `--sources a,b` | semua sumber | Sumber yang diuji; hanya discovery `rss` yang didukung |
+| `--articles N` | `3` | Artikel terbaru per sumber |
+| `--drivers a,b` | `agent-browser,cdp,playwright` | Driver yang dibandingkan; yang pertama menjadi pembanding kesetaraan isi |
+| `--urls <hasil.json>` | - | Pakai ulang URL dari hasil benchmark sebelumnya, bukan RSS terbaru |
+| `--config <path>` | `config.json` | File config |
+| `--out <path>` | `data/bench-<waktu>.json` | Hasil lengkap per pengukuran |
+
+Pengukuran memori hanya tersedia di Windows. agent-browser memakai session `<session>-bench` agar tidak mengganggu server yang sedang berjalan. Hasil benchmark 2 November 2026: [`docs/reserch/benchmark-driver-browser-2026-11-02.md`](../docs/reserch/benchmark-driver-browser-2026-11-02.md).
+
+### Benchmark akurasi terhadap halaman asli
+
+```bash
+CHROME_PATH=<path chrome> bun run bench:accuracy --sources detik,liputan6 --articles 3
+```
+
+`tools/compare-with-source.js` menerima argumen yang sama (`--sources`, `--articles`, `--drivers`, `--config`, `--urls`, `--out`, default `data/accuracy-<waktu>.json`). `--urls <hasil.json>` memakai ulang URL dari hasil sebelumnya (kedua alat), supaya perubahan ekstraktor diukur pada artikel yang sama. Untuk setiap URL, alat ini mengambil HTML asli lewat `fetch` biasa dan mengurainya dengan `HTMLRewriter` memakai selector per situs di tabel `REFERENCE` (wadah isi, judul, penulis, tanggal yang terlihat; halaman lanjutan ikut dibaca). Hasil ekstraksi tiap driver lalu dinilai: recall dan presisi kata isi berita, paragraf hilang dan paragraf bukan berita, judul, tanggal (WIB, sampai menit), penulis, dan gambar di dalam isi.
+
+Sumber tanpa entri `REFERENCE` dilewati. Jika situs mengubah tampilan, artikelnya ditandai `reference: no paragraphs` dan selector di `REFERENCE` perlu diperbarui. Hasil 2 November 2026: [`docs/reserch/benchmark-akurasi-ekstraksi-2026-11-02.md`](../docs/reserch/benchmark-akurasi-ekstraksi-2026-11-02.md).
+
 ### Mode server
 
 Keputusan desain: [ADR-0002](../docs/adr/0002-scraper-sebagai-server-dengan-jadwal-cron-per-sumber.md).
@@ -162,11 +200,12 @@ Endpoint lain membalas `404`, metode selain `GET` membalas `405`. Server mendeng
 
 ### Runtime: Bun
 
-Seluruh kode memakai API Bun, tanpa import `node:*` maupun dependency npm:
+Seluruh kode memakai API Bun, tanpa import `node:*`. Satu-satunya dependency npm adalah `playwright-core`, dan hanya di-import oleh `playwright-driver.js` saat driver `playwright` dipilih (ADR-0003).
 
 | Kebutuhan | API Bun |
 |---|---|
 | Menjalankan agent-browser | `Bun.spawn`, `Bun.which` |
+| Menjalankan Chrome dan mengendalikannya lewat CDP (driver `cdp`) | `Bun.spawn`, `WebSocket` |
 | Baca/tulis file (folder induk dibuat otomatis) | `Bun.file`, `Bun.write` |
 | Penulisan state yang aman (tulis file sementara lalu pindahkan) | Bun Shell `` $`mv ...` `` |
 | Hash ID artikel | `Bun.CryptoHasher` |
@@ -188,7 +227,8 @@ Pengecualian: `src/infrastructure/browser/scripts/extract-article.js` berjalan d
 | `webhook.timeoutMs` | `15000` | Timeout per request |
 | `webhook.retries` | `3` | Jumlah percobaan ulang setelah percobaan pertama |
 | `userAgent` | `NewsScraperBot/1.0` | User-Agent untuk request RSS. Halaman artikel dibuka dengan User-Agent bawaan Chrome |
-| `session` | `newscraper` | Nama session agent-browser |
+| `browserDriver` | `agent-browser` | `agent-browser`, `playwright`, atau `cdp`; bisa ditimpa env `BROWSER_DRIVER`. Nilai lain ditolak saat start |
+| `session` | `newscraper` | Nama session agent-browser; hanya untuk driver `agent-browser` |
 | `timezone` | `Asia/Jakarta` | Zona waktu IANA untuk semua jadwal; nama tidak valid ditolak saat start |
 | `server.host` | `127.0.0.1` | Alamat endpoint `/health` dan `/status` |
 | `server.port` | `3000` | Port endpoint; bisa ditimpa env `PORT` |
@@ -224,8 +264,42 @@ cp .env.example .env
 | `WEBHOOK_TOKEN` | Dikirim sebagai `Authorization: Bearer <token>` |
 | `PORT` | Menimpa `server.port` |
 | `AGENT_BROWSER_BIN` | Path binary agent-browser; jika kosong, dicari otomatis di PATH |
+| `BROWSER_DRIVER` | Menimpa `browserDriver` |
+| `CHROME_PATH` | Path Chrome untuk driver `playwright` dan `cdp`. Wajib untuk `cdp`; kosong pada `playwright` berarti Chromium milik Playwright |
+| `CHROME_SANDBOX` | `1` menyalakan sandbox Chrome pada driver `playwright` dan `cdp`; kosong atau `0` berarti `--no-sandbox` |
 
 Variabel yang kosong (mis. `WEBHOOK_TOKEN=`) dianggap tidak diisi. Di Windows, tulis path dengan `/` karena di dalam tanda kutip ganda Bun membaca `\n` sebagai baris baru.
+
+### Driver browser
+
+Driver dipilih lewat `BROWSER_DRIVER` (atau `browserDriver` di `config.json`). Semua driver menjalankan `extract-article.js` yang sama di halaman, jadi payload yang dihasilkan sama. Perbandingan dan kriteria pemilihan default ada di [ADR-0003](../docs/adr/0003-driver-browser-agent-browser-playwright-atau-cdp.md).
+
+| Driver | Cara kerja | Butuh |
+|---|---|---|
+| `agent-browser` (default) | Satu proses CLI agent-browser per perintah; daemon menyimpan Chrome | agent-browser (npm) |
+| `playwright` | `playwright-core` di dalam proses Bun, satu koneksi ke Chrome | `bun install`; Chromium Playwright atau `CHROME_PATH` |
+| `cdp` | Chrome diluncurkan dengan `Bun.spawn` dan dikendalikan lewat Chrome DevTools Protocol di atas `WebSocket` bawaan Bun | `CHROME_PATH` |
+
+```bash
+# Contoh: dry-run dengan driver cdp memakai Chrome milik agent-browser (Windows)
+BROWSER_DRIVER=cdp CHROME_PATH="C:/Users/<user>/.agent-browser/browsers/chrome-156.0.8078.80/chrome.exe" bun run dry-run
+```
+
+Perilaku driver `playwright` dan `cdp`:
+
+- Chrome diluncurkan saat halaman pertama dibuka, dengan profil sementara yang dihapus saat ditutup (`cdp`).
+- Jika Chrome crash, perintah yang sedang berjalan gagal dan Chrome diluncurkan ulang pada halaman berikutnya.
+- `open` selesai saat `DOMContentLoaded`; gambar dan iklan yang lambat tidak ditunggu. `waitFor` menunggu selector ada di DOM.
+- Sandbox Chrome mati secara default (`--no-sandbox`), mengikuti perilaku bawaan Playwright, karena sandbox tidak bisa jalan di Docker dengan profil seccomp standar. Akibatnya, isolasi dari halaman tak tepercaya bergantung pada lingkungan: jalankan sebagai user non-root, sebaiknya di container dengan `--cap-drop ALL --security-opt no-new-privileges --read-only --tmpfs /tmp`. Rincian dan statusnya: ADR-0003 bagian 4.2.
+- Di container, `--pids-limit` menghitung thread. Satu Chrome memakai ±160 thread, jadi batasnya minimal 1024.
+
+**Terverifikasi** (2 November 2026, Bun 1.4.4, Chrome for Testing 156.0.8078.80):
+
+- Dry-run 2 artikel antaranews di Windows 11 dengan ketiga driver: ID, judul, `content_text`, `word_count`, gambar, `published_at`, dan `authors` identik.
+- Uji integrasi dengan halaman lokal (artikel, redirect, konten JavaScript dengan `waitFor`, iframe, gambar yang tidak pernah selesai dimuat, navigasi hash, error navigasi, error skrip, timeout `waitFor`, tutup dua kali) lolos untuk `playwright` dan `cdp` di Windows dan di Docker Linux (Debian 13, container dengan pembatasan di atas). Peluncuran ulang setelah `kill -9` ke Chrome diuji di Linux.
+- Setelah `close`, tidak ada proses Chrome maupun folder profil sementara yang tersisa, di Windows maupun Linux.
+
+- `open` agent-browser menunggu event `load` (di situs penuh iklan sampai ±20 dtk), sedangkan `playwright` dan `cdp` selesai saat `DOMContentLoaded`. Di situs penuh iklan, median per artikel 25 dtk (agent-browser) vs 0,3–0,6 dtk; widget yang diisi JavaScript belakangan (mis. penghitung views) bisa belum terisi pada `playwright` dan `cdp`. Rincian: [benchmark 2 November 2026](../docs/reserch/benchmark-driver-browser-2026-11-02.md).
 
 ## Kontrak untuk sistem penerima
 
@@ -342,7 +416,7 @@ flowchart TB
     subgraph INF["infrastructure: adapter (API Bun)"]
         SC["BunCronScheduler"]
         HS["StatusServer"]
-        AB["AgentBrowserCli<br/>BrowserPageReader"]
+        AB["AgentBrowserCli / PlaywrightDriver / CdpDriver<br/>BrowserPageReader"]
         DS["SourceUrlDiscoverer<br/>rss-feed"]
         PB["WebhookPublisher<br/>LogPublisher"]
         ST["JsonFileSentStore"]
@@ -370,7 +444,7 @@ flowchart TB
 
 **Aturan dependensi:** panah hanya mengarah ke dalam. `domain` tidak meng-import apa pun dari project ini. `application` hanya mengenal `domain` dan port. Detail teknis (agent-browser, HTTP, file) hanya ada di `infrastructure`. `main.js` satu-satunya tempat merakit semuanya.
 
-- **Mudah diganti:** pindah dari agent-browser ke Playwright cukup membuat `PageReader` baru; pindah dari webhook ke database atau antrean cukup membuat `ArticlePublisher` baru. Usecase tidak berubah.
+- **Mudah diganti:** driver browser dipilih lewat `BROWSER_DRIVER`, dan semua driver memenuhi kontrak `BrowserDriver` (`browser-driver.js`) yang dipakai `BrowserPageReader` dan `SourceUrlDiscoverer`; pindah dari webhook ke database atau antrean cukup membuat `ArticlePublisher` baru. Usecase tidak berubah.
 - **Mudah diuji:** usecase diuji dengan implementasi palsu (`test/application/fakes.js`), tanpa browser dan jaringan.
 
 ### Struktur folder
@@ -395,7 +469,12 @@ scraper/
 │  │  └─ graceful-shutdown.js                 urutan penghentian server
 │  └─ infrastructure/
 │     ├─ browser/
-│     │  ├─ agent-browser-cli.js              pembungkus CLI agent-browser
+│     │  ├─ browser-driver.js                 kontrak BrowserDriver: open, eval, close
+│     │  ├─ agent-browser-cli.js              BrowserDriver: pembungkus CLI agent-browser
+│     │  ├─ playwright-driver.js              BrowserDriver: playwright-core
+│     │  ├─ cdp-driver.js                     BrowserDriver: CDP langsung
+│     │  ├─ cdp-client.js                     klien CDP di atas WebSocket
+│     │  ├─ chrome-process.js                 meluncurkan dan menghentikan Chrome untuk driver cdp
 │     │  ├─ browser-page-reader.js            PageReader: open + eval ekstraktor
 │     │  └─ scripts/extract-article.js        berjalan di dalam halaman: JSON-LD → OpenGraph → DOM
 │     ├─ discovery/
@@ -410,11 +489,15 @@ scraper/
 │     ├─ http/status-server.js                Bun.serve: GET /health, GET /status
 │     ├─ config/load-config.js                config.json + env
 │     └─ logging/json-logger.js               Logger: JSON per baris
-├─ tools/mock-receiver.js                     penerima tiruan untuk uji coba
+├─ tools/
+│  ├─ mock-receiver.js                        penerima tiruan untuk uji coba
+│  ├─ bench-common.js                         bagian bersama alat benchmark
+│  ├─ compare-drivers.js                      benchmark driver browser: kecepatan, memori, kesetaraan isi
+│  └─ compare-with-source.js                  benchmark akurasi terhadap halaman asli
 └─ test/
    ├─ domain/                                 artikel, sumber, discovery
    ├─ application/                            usecase, antrean, shutdown diuji dengan fakes.js
-   ├─ infrastructure/                         config, discoverer, scheduler, server status
+   ├─ infrastructure/                         config, discoverer, scheduler, server status, driver cdp dan playwright (server CDP tiruan)
    └─ fixtures/                               config tidak valid untuk test
 ```
 
@@ -423,7 +506,7 @@ scraper/
 | Kebutuhan | Yang dibuat | Yang diubah |
 |---|---|---|
 | Kirim ke database atau antrean | `infrastructure/publishing/<nama>-publisher.js` dengan method `publish(record)` | Satu baris di `main.js` |
-| Ganti agent-browser dengan Playwright | `infrastructure/browser/<nama>-page-reader.js` dengan method `read(url, { waitFor })` | Satu baris di `main.js` |
+| Driver browser baru | `infrastructure/browser/<nama>-driver.js` yang memenuhi `BrowserDriver` (`open`, `eval`, `close`) | `createBrowserDriver` di `main.js` dan `BROWSER_DRIVERS` di `load-config.js` |
 | Simpan state di Redis | `infrastructure/persistence/redis-sent-store.js` dengan `has` / `markSent` | Satu baris di `main.js` |
 | Jenis discovery baru (mis. sitemap) | Tambah ke `DISCOVERY_TYPES` dan `SourceUrlDiscoverer` | `domain/source.js`, discoverer |
 | Situs berita baru | Entri di `config.json` | Ikuti skill `add-news-source` |
@@ -450,11 +533,13 @@ Satu baris JSON per kejadian di stdout (`fatal` di stderr):
 
 ## Catatan
 
-- **Kinerja terukur:** 2,0–2,8 detik per artikel termasuk `delayMs` 1,5 detik (dry-run 4 artikel antaranews, Bun 1.4.4, Windows lokal, 1 November 2026). Artikel diproses berurutan dalam satu session browser.
+- **Kinerja terukur:** 2,0–2,8 detik per artikel termasuk `delayMs` 1,5 detik (driver agent-browser, dry-run 4 artikel antaranews, Bun 1.4.4, Windows lokal, 1 November 2026). Artikel diproses berurutan dalam satu session browser.
 - Jangan memakai `wait --load networkidle`: iklan membuat halaman berita jarang "idle", dan daemon agent-browser tetap menunggu sekitar 25 detik walaupun proses CLI sudah dihentikan. Gunakan `waitFor`.
 - Pada kompas.com, `agent-browser open` kadang mengembalikan error walaupun halaman sudah terbuka; adapter mengecek ulang dengan `get url`.
 - tribunnews.com memblokir browser otomatis ("Akses ditolak").
-- **Masalah kualitas data yang diketahui:** sisa label "Baca juga:", paragraf promosi (Kompas), gambar tidak terkait dari blok rekomendasi, `authors` berisi nama penerbit (Kompas), `section` kosong.
+- **Pemilihan wadah isi:** `extract-article.js` mencoba daftar selector isi yang umum di situs berita, lalu memeriksanya dengan skor kepadatan paragraf (mirip Readability). Situs dengan struktur yang tidak dikenal tetap ditangani lewat skor. Elemen bukan isi (iklan, "baca juga", share, penulis/tanggal, keterangan foto) dan baris label (`ADVERTISEMENT`, `SCROLL TO CONTINUE…`, `Pewarta:/Editor:`, ajakan follow, `[Gambas:…]`, inisial redaksi) dibuang. Pada 8 sumber yang diukur, recall dan presisi isi 98–100% ([benchmark akurasi](../docs/reserch/benchmark-akurasi-ekstraksi-2026-11-02.md#pengukuran-ulang-setelah-perbaikan-ekstraktor)). Pengaruhnya pada Kompas belum diukur.
+- **Masalah kualitas data yang diketahui:** paragraf promosi dan `authors` berisi nama penerbit di Kompas (belum diukur ulang), gambar tidak terkait dari blok rekomendasi, `section` kosong (15 dari 24 artikel pada benchmark akurasi).
+- tempo.co dan republika.co.id memblokir Chrome headless (Cloudflare "Sorry, you have been blocked" / `net::ERR_HTTP_RESPONSE_CODE_FAILURE`); jangan dicoba ditembus.
 - Scraper **tidak memeriksa `robots.txt` secara otomatis**. Periksa `robots.txt` dan ToS setiap situs saat menambah sumber, dan jangan memublikasikan ulang isi berita tanpa izin.
 - **Larangan penerbit yang sudah diketahui:**
   - `robots.txt` kompas.com melarang scraping dan data mining otomatis tanpa izin tertulis dari PT Kompas Cyber Media. Sumber `kompas` di `config.json` tidak boleh dijalankan sebelum izin itu ada.

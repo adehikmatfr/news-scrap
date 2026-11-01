@@ -21,6 +21,29 @@ function parsePort(value) {
   return port;
 }
 
+const BROWSER_DRIVERS = ['agent-browser', 'playwright', 'cdp'];
+
+function parseFlag(name, value) {
+  if (value === undefined || value === '0' || value === 'false') return false;
+  if (value === '1' || value === 'true') return true;
+  throw new Error(`invalid ${name} "${value}" (use 1 or 0)`);
+}
+
+// Pilihan driver browser dan opsi Chrome untuk driver `playwright`/`cdp` (ADR-0003).
+function parseBrowser(raw, fromEnv) {
+  const driver = fromEnv('BROWSER_DRIVER') ?? raw.browserDriver ?? 'agent-browser';
+  if (!BROWSER_DRIVERS.includes(driver)) {
+    throw new Error(`invalid browser driver "${driver}" (use one of: ${BROWSER_DRIVERS.join(', ')})`);
+  }
+  const browser = {
+    driver,
+    chromePath: fromEnv('CHROME_PATH') ?? null,
+    sandbox: parseFlag('CHROME_SANDBOX', fromEnv('CHROME_SANDBOX')),
+  };
+  if (driver === 'cdp' && !browser.chromePath) throw new Error('CHROME_PATH is required for browser driver "cdp"');
+  return browser;
+}
+
 export async function loadConfig(file, env = Bun.env) {
   const raw = await Bun.file(file).json();
   if ('intervalMinutes' in raw) {
@@ -47,6 +70,7 @@ export async function loadConfig(file, env = Bun.env) {
     },
     shutdownTimeoutMs: raw.shutdownTimeoutMs ?? 60_000,
     userAgent: raw.userAgent ?? 'NewsScraperBot/1.0',
+    browser: parseBrowser(raw, fromEnv),
     session: raw.session ?? 'newscraper',
     delayMs: raw.delayMs ?? 1500,
     statePath: resolveFrom(file, raw.statePath ?? 'data/sent.json'),

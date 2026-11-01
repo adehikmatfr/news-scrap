@@ -1,5 +1,6 @@
-// Ekstraktor artikel berita generik; dijalankan di dalam halaman lewat `agent-browser eval -b`.
-// Prioritas: JSON-LD (NewsArticle) -> OpenGraph/meta -> parsing DOM.
+// Ekstraktor artikel berita generik; dijalankan di dalam halaman lewat `eval` driver browser.
+// Prioritas metadata: JSON-LD (NewsArticle) -> OpenGraph/meta -> parsing DOM.
+// Akurasinya diukur dengan `bun run bench:accuracy` (README: Benchmark akurasi terhadap halaman asli).
 (() => {
   const meta = (sel) => document.querySelector(sel)?.getAttribute('content')?.trim() || null;
   const abs = (u) => { try { return u ? new URL(u, location.href).href : null; } catch { return null; } };
@@ -22,19 +23,122 @@
   const ldImages = [].concat(ld.image || []).map((i) => (typeof i === 'string' ? i : i?.url)).filter(Boolean);
 
   // --- Isi artikel ---
-  // Selector spesifik didahulukan; kandidat dengan teks ≤ 200 karakter dianggap wadah kosong.
+  // Wadah isi dipilih dari selector yang umum di situs berita, lalu diperiksa dengan skor kepadatan
+  // paragraf (mirip Readability). Situs dengan struktur yang tidak dikenal tetap tertangani lewat skor.
+  const NOISE_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'IFRAME', 'INS', 'ASIDE', 'FORM', 'BUTTON', 'SVG', 'FIGURE', 'FIGCAPTION', 'NAV', 'FOOTER', 'BLOCKQUOTE']);
+  // Token kelas/id (dipisah spasi, `-`, `_`) yang menandai elemen bukan isi berita.
+  const NOISE_CLASS = /(^|[\s_-])(ads?|advert\w*|iklan|banner|promo\w*|sponsor\w*|related|terkait|rekomendasi|recommend\w*|baca-?juga|bacajuga|lihat-?juga|share|social|sosmed|comments?|komentar|newsletter|subscribe|tags?|topik|breadcrumbs?|nav\w*|menu|sidebar|footer|popular|terpopuler|trending|widget|parallax|author|penulis|reporter|byline|redaksi|date|time|caption)($|[\s_-])/i;
+  const BODY_CLASS = /article|body|content|entry|main|post|text|story|detail|read|isi|berita/i;
+  const BLOCK_TAGS = new Set(['P', 'DIV', 'SECTION', 'ARTICLE', 'LI', 'UL', 'OL', 'H2', 'H3', 'H4', 'H5', 'H6', 'TABLE', 'TR', 'PRE', 'HEADER']);
   const bodySelectors = [
-    '[itemprop="articleBody"]', '.post-content', '.article-content', '.detail__body-text',
-    '.read__content', '.entry-content', 'article .content', 'article',
+    '[itemprop="articleBody"]', '.detail__body-text', '.read__content', '.post-content', '.entry-content',
+    '.article-content', '.article-body', '.article__body', '.article__content', '.story-body', '.post-body',
+    '.detail-content', '.content-detail', '.detail-desc', '.main-content-detail', '.c-detail', '.news-content',
+    '.isi-berita', '[class*="article-content"]', '[class*="article-body"]', '[class*="content-body"]',
+    '[class*="body-text"]', '[class*="detail-text"]',
   ];
-  const body = bodySelectors.map((s) => document.querySelector(s)).find((el) => el && el.innerText.trim().length > 200);
+
+  const classOf = (el) => `${typeof el.className === 'string' ? el.className : ''} ${el.id || ''}`;
+  const isNoise = (el) => NOISE_TAGS.has(el.tagName) || NOISE_CLASS.test(classOf(el)) || el.hidden || el.getAttribute('aria-hidden') === 'true';
+  const insideNoise = (el, root) => {
+    for (let e = el; e && e !== root && e !== document.body; e = e.parentElement) if (isNoise(e)) return true;
+    return false;
+  };
+  const directText = (el) => [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join(' ').replace(/\s+/g, ' ').trim();
+
+  // Satuan teks: <p> yang cukup panjang, atau elemen blok yang teksnya langsung dipisah <br> (tanpa <p>).
+  const units = [];
+  for (const el of document.body.querySelectorAll('p, div, section, article, td')) {
+    if (insideNoise(el, null)) continue;
+    const text = el.tagName === 'P' ? el.textContent.replace(/\s+/g, ' ').trim() : directText(el);
+    if (text.length >= (el.tagName === 'P' ? 25 : 80)) units.push({ el, len: text.length, commas: text.split(',').length - 1 });
+  }
+  const unitText = (root) => units.reduce((sum, u) => sum + (root.contains(u.el) ? u.len : 0), 0);
+  const linkDensity = (el) => {
+    const total = el.textContent.length || 1;
+    return [...el.querySelectorAll('a')].reduce((sum, a) => sum + a.textContent.length, 0) / total;
+  };
+
+  const scores = new Map();
+  const addScore = (el, s) => el && el !== document.body && scores.set(el, (scores.get(el) ?? 0) + s);
+  for (const u of units) {
+    const s = 1 + u.commas + Math.min(Math.floor(u.len / 100), 3);
+    const container = u.el.tagName === 'P' ? u.el.parentElement : u.el;
+    addScore(container, s);
+    addScore(container?.parentElement, s / 2);
+  }
+  let best = null;
+  let bestScore = 0;
+  for (const [el, raw] of scores) {
+    const weight = (BODY_CLASS.test(classOf(el)) ? 25 : 0) - (NOISE_CLASS.test(classOf(el)) ? 25 : 0);
+    const s = (raw + weight) * (1 - linkDensity(el));
+    if (s > bestScore) [best, bestScore] = [el, s];
+  }
+  // Naik ke induk jika induk memuat jauh lebih banyak isi, mis. artikel yang dipecah ke beberapa wadah bersaudara.
+  while (best?.parentElement && best.parentElement !== document.body) {
+    const parent = best.parentElement;
+    if (isNoise(parent) || linkDensity(parent) > 0.35 || unitText(parent) < unitText(best) * 1.2) break;
+    best = parent;
+  }
+
+  // Selector dipakai jika cocok dengan hasil skor (memuat atau dimuat olehnya, atau isinya setara); selain itu pakai skor.
+  const bestText = best ? unitText(best) : 0;
+  const bySelector = bodySelectors.map((s) => document.querySelector(s)).find((el) => {
+    if (!el || unitText(el) <= 200) return false;
+    return !best || el.contains(best) || best.contains(el) || unitText(el) >= bestText * 0.7;
+  });
+  const body = bySelector || (bestText > 200 ? best : null);
+
+  // Baris yang terlihat di dalam wadah isi tetapi bukan isi berita.
+  const NOISE_LINE = [
+    /^(advertisement|iklan|scroll to continue( with content)?|loading\.*)$/i,
+    /^(baca (juga|berita|selengkapnya|artikel)|baca\s*:|lihat juga|simak (juga|video|berita)|saksikan( juga)?|tonton( juga)?)\b/i,
+    /^(ikuti|follow|dapatkan|download|unduh|klik)\b.{0,80}(whatsapp|channel|google news|aplikasi|instagram|telegram|update|berita terbaru|di ?sini)/i,
+    /^(pewarta|editor|reporter|penulis|fotografer|redaktur|sumber)\s*:/i,
+    /^(copyright|hak cipta|©)/i,
+    /^dilarang (keras )?mengambil konten/i,
+    /^halaman\s*:?\s*\d/i,
+    /^\[gambas:[^\]]*\]$/i,
+    /^\(?[a-z]{2,5}(\/[a-z]{2,5})*\)?$/i, // inisial editor, mis. `(ahm)`
+    /^\([\p{L} .'/-]{2,60}\)$/u, // kredit redaksi dalam kurung, mis. `(Erha Aprili Ramadhoni)`
+    /\bmenyajikan (informasi|berita) terbaru\b/i,
+    /^[\W\d_]{0,3}$/, // tanda baca atau huruf awal (drop cap) yang terpisah
+  ];
+  const isNoiseLine = (t) => NOISE_LINE.some((re) => re.test(t));
+
+  // Isi diambil per <p> jika <p> memuat sebagian besar teks; jika tidak (isi dipisah <br>), per baris blok.
+  const collectLines = (root) => {
+    const out = [];
+    let buffer = '';
+    const flush = () => {
+      const t = buffer.replace(/\s+/g, ' ').trim();
+      if (t) out.push(t);
+      buffer = '';
+    };
+    const walk = (node) => {
+      for (const child of node.childNodes) {
+        if (child.nodeType === 3) buffer += child.textContent;
+        if (child.nodeType !== 1 || isNoise(child)) continue;
+        if (child.tagName === 'BR') {
+          flush();
+          continue;
+        }
+        const block = BLOCK_TAGS.has(child.tagName);
+        if (block) flush();
+        walk(child);
+        if (block) flush();
+      }
+    };
+    walk(root);
+    flush();
+    return out;
+  };
   let paragraphs = [];
   if (body) {
-    const clone = body.cloneNode(true);
-    clone.querySelectorAll('script, style, iframe, ins, aside, .ads, [class*="baca-juga"], [class*="related"], [class*="advert"]')
-      .forEach((n) => n.remove());
-    paragraphs = [...clone.querySelectorAll('p')].map((p) => p.innerText.trim()).filter((t) => t.length > 0);
-    if (!paragraphs.length) paragraphs = clone.innerText.split('\n').map((t) => t.trim()).filter(Boolean);
+    const fromP = [...body.querySelectorAll('p')].filter((p) => !insideNoise(p, body)).map((p) => p.innerText.trim()).filter(Boolean);
+    const lines = collectLines(body);
+    const pChars = fromP.join('').length;
+    paragraphs = (pChars >= lines.join('').length * 0.6 ? fromP : lines).filter((t) => !isNoiseLine(t));
   }
 
   // --- Gambar (dukung lazy-load) ---
