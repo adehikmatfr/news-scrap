@@ -43,7 +43,8 @@ Periksa: `title`, `published_at`, `authors`, `content_text` (bandingkan dengan h
 Tambah entri ke `scraper/config.json`:
 ```json
 {
-  "name": "<nama>",
+  "name": "<nama unik>",
+  "schedule": "*/30 * * * *",
   "discovery": { "type": "rss|index", "url": "..." },
   "pattern": "^https://...",
   "waitFor": "<selector, opsional>",
@@ -54,9 +55,9 @@ Tambah entri ke `scraper/config.json`:
 }
 ```
 
-Uji dengan config salinan di scratchpad (`maxArticles: 2`, `statePath` di scratchpad, hanya sumber baru):
+Pastikan `schedule` valid dan `name` unik (keduanya divalidasi saat start). Uji dengan config salinan di scratchpad (`maxArticles: 2`, `statePath` di scratchpad):
 ```powershell
-bun src/main.js --once --dry-run --config <scratchpad>\test-config.json
+bun src/main.js --once --dry-run --source <nama> --config <scratchpad>\test-config.json
 ```
 Lalu jalankan `bun test` (harus tetap lolos) dan uji ulang satu sumber lama untuk memastikan tidak ada regresi.
 

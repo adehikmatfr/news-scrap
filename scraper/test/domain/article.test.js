@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { IncompleteArticleError, articleId, assertComplete, mergePages } from '../../src/domain/article.js';
+import { IncompleteArticleError, articleId, assertComplete, isTooOld, mergePages } from '../../src/domain/article.js';
 import { createSource } from '../../src/domain/source.js';
 import { normalizeURL } from '../../src/domain/url.js';
 
@@ -30,6 +30,21 @@ describe('assertComplete', () => {
   });
 });
 
+describe('isTooOld', () => {
+  const now = new Date('2026-11-02T00:00:00Z');
+
+  it('compares published_at against maxAgeHours', () => {
+    expect(isTooOld({ published_at: '2019-08-01T12:42:15+07:00' }, 48, now)).toBe(true);
+    expect(isTooOld({ published_at: '2026-11-01T22:59:19+07:00' }, 48, now)).toBe(false);
+  });
+
+  it('never treats an article as old without a limit or a readable date', () => {
+    expect(isTooOld({ published_at: '2019-08-01T12:42:15+07:00' }, null, now)).toBe(false);
+    expect(isTooOld({ published_at: null }, 48, now)).toBe(false);
+    expect(isTooOld({ published_at: 'kemarin sore' }, 48, now)).toBe(false);
+  });
+});
+
 describe('mergePages', () => {
   it('joins content, recounts words, and dedupes images', () => {
     const merged = mergePages([
@@ -43,14 +58,41 @@ describe('mergePages', () => {
 });
 
 describe('createSource', () => {
+  const base = { name: 'x', schedule: '*/15 * * * *', discovery: { type: 'rss', url: 'https://a.com/rss' } };
+
   it('applies defaults and compiles the pattern', () => {
-    const s = createSource({ name: 'x', discovery: { type: 'rss', url: 'https://a.com/rss' }, pattern: '/berita/' });
+    const s = createSource({ ...base, pattern: '/berita/' });
     expect(s.maxPages).toBe(10);
     expect(s.preferAllPage).toBe(true);
     expect(s.pattern.test('https://a.com/berita/1')).toBe(true);
   });
 
   it('rejects unknown discovery types', () => {
-    expect(() => createSource({ name: 'x', discovery: { type: 'ftp', url: 'x' } })).toThrow(/discovery.type/);
+    expect(() => createSource({ ...base, discovery: { type: 'ftp', url: 'x' } })).toThrow(/discovery.type/);
+  });
+
+  it('requires a valid schedule', () => {
+    expect(() => createSource({ ...base, schedule: undefined })).toThrow(/schedule is required/);
+    expect(() => createSource({ ...base, schedule: '99 * * * *' })).toThrow(/invalid schedule/);
+    expect(() => createSource({ ...base, schedule: '0 0 30 2 *' })).toThrow(/never runs/);
+    expect(createSource({ ...base, schedule: '@hourly' }).schedule).toBe('@hourly');
+  });
+
+  it('defaults discovery to one date and one page', () => {
+    expect(createSource(base).discovery).toMatchObject({ days: 1, maxPages: 1 });
+  });
+
+  it('requires placeholders when asking for several dates or pages', () => {
+    const indexed = (discovery) => createSource({ ...base, discovery: { type: 'index', url: 'https://n.example.com/i', ...discovery } });
+    expect(() => indexed({ maxPages: 5 })).toThrow(/requires \{page\}/);
+    expect(() => indexed({ days: 2 })).toThrow(/requires \{date\}/);
+    expect(() => indexed({ url: 'https://n.example.com/i?page={page}', maxPages: 99 })).toThrow(/between 1 and 50/);
+    expect(indexed({ url: 'https://n.example.com/i?date={date}&page={page}', days: 2, maxPages: 5 }).discovery)
+      .toMatchObject({ days: 2, maxPages: 5 });
+  });
+
+  it('rejects a non-positive maxAgeHours', () => {
+    expect(() => createSource({ ...base, maxAgeHours: 0 })).toThrow(/maxAgeHours/);
+    expect(createSource({ ...base, maxAgeHours: 48 }).maxAgeHours).toBe(48);
   });
 });

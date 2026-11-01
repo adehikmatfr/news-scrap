@@ -1,10 +1,10 @@
-import { articleId, assertComplete } from '../domain/article.js';
+import { articleId, assertComplete, isTooOld } from '../domain/article.js';
 
 /**
- * Satu siklus scraping untuk semua sumber:
+ * Satu kali jalan untuk satu sumber:
  * discover URL -> lewati yang sudah terkirim -> ambil artikel -> validasi -> publish -> catat terkirim.
  */
-export class ScrapeSources {
+export class ScrapeSource {
   /**
    * @param {object} deps
    * @param {import('./ports.js').UrlDiscoverer} deps.discoverer
@@ -20,23 +20,8 @@ export class ScrapeSources {
     Object.assign(this, { discoverer, scrapeArticle, publisher, sentStore, logger, delayMs, clock, sleep });
   }
 
-  async execute(sources, { shouldStop = () => false } = {}) {
-    const results = [];
-    for (const source of sources) {
-      if (shouldStop()) break;
-      try {
-        const stats = await this.#runSource(source, shouldStop);
-        this.logger.info('source done', { source: source.name, ...stats });
-        results.push({ source: source.name, ...stats });
-      } catch (err) {
-        this.logger.error('source failed', { source: source.name, error: err.message });
-        results.push({ source: source.name, error: err.message });
-      }
-    }
-    return results;
-  }
-
-  async #runSource(source, shouldStop) {
+  /** @returns {Promise<{published: number, skipped: number, failed: number}>} */
+  async execute(source, { shouldStop = () => false } = {}) {
     const urls = await this.discoverer.discover(source);
     const pending = [];
     for (const url of urls) {
@@ -45,12 +30,12 @@ export class ScrapeSources {
     }
     this.logger.info('discovered', { source: source.name, found: urls.length, pending: pending.length });
 
-    const stats = { published: 0, failed: 0 };
+    const stats = { published: 0, skipped: 0, failed: 0 };
     for (const url of pending) {
+      // Dicek di antara artikel, sehingga artikel yang sedang diproses selalu diselesaikan.
       if (shouldStop()) break;
       try {
-        await this.#processArticle(source, url);
-        stats.published++;
+        stats[await this.#processArticle(source, url)]++;
       } catch (err) {
         stats.failed++;
         this.logger.warn('article failed', { source: source.name, url, error: err.message });
@@ -60,19 +45,29 @@ export class ScrapeSources {
     return stats;
   }
 
+  /** @returns {Promise<'published'|'skipped'>} */
   async #processArticle(source, url) {
     const article = await this.scrapeArticle.execute(url, source);
+    const id = articleId(url);
+
+    // Artikel tua tetap dicatat agar tidak dibuka ulang di setiap jalan.
+    if (isTooOld(article, source.maxAgeHours, this.clock())) {
+      await this.sentStore.markSent(url, { id, status: 'skipped:too-old' });
+      this.logger.info('article skipped', { source: source.name, url, reason: 'too old', published_at: article.published_at });
+      return 'skipped';
+    }
     assertComplete(article, source.minWords);
 
     const record = {
-      id: articleId(url),
+      id,
       source: source.name,
       scrapedAt: this.clock(),
       article: { ...article, url },
     };
-    // Dicatat terkirim hanya setelah publish berhasil, agar artikel yang gagal dicoba lagi di siklus berikutnya.
+    // Dicatat terkirim hanya setelah publish berhasil, agar artikel yang gagal dicoba lagi di jalan berikutnya.
     const { status } = await this.publisher.publish(record);
     await this.sentStore.markSent(url, { id: record.id, status });
     this.logger.info('published', { source: source.name, url, id: record.id, status });
+    return 'published';
   }
 }

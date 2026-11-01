@@ -1,0 +1,7 @@
+{
+  "webhook": { "url": "http://localhost:8080/articles" },
+  "sources": [
+    { "name": "a", "schedule": "*/15 * * * *", "discovery": { "type": "rss", "url": "https://a.example.com/rss" } },
+    { "name": "a", "schedule": "@hourly", "discovery": { "type": "rss", "url": "https://a.example.com/rss" } }
+  ]
+}

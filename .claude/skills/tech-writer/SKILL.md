@@ -52,7 +52,8 @@ Dokumentasi ditulis untuk engineer yang sedang menyelidiki masalah nyata, misaln
 - **Fakta jalur kritis ditulis persis seperti yang ditegakkan kode**, atau tidak ditulis sama sekali:
   - cara `id` artikel diturunkan dan kenapa stabil (`src/domain/article.js`);
   - klasifikasi retry: status mana yang diulang dan mana yang tidak (`webhook-publisher.js`);
-  - kapan artikel dicatat terkirim (`scrape-sources.js`);
+  - kapan artikel dicatat terkirim (`scrape-source.js`);
+  - antrean serial, status sumber, dan graceful shutdown (`source-run-queue.js`, `graceful-shutdown.js`);
   - penulisan state yang aman (`json-file-sent-store.js`);
   - kondisi berhenti pagination (`scrape-article.js`).
 - **Prosa yang dipangkas dari komentar kode pindah ke sini.** Skill `comment-style` membatasi komentar menjadi maksud singkat, jadi penjelasan panjang yang dibuang dari kode ditulis di README atau ADR dalam bentuk dokumen. Pastikan rujukan di komentar (mis. "lihat README bagian ...") mengarah ke bagian yang benar-benar ada. Jangan memindahkannya kembali ke kode sebagai komentar.

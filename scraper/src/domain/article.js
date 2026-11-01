@@ -12,6 +12,13 @@ export const articleId = (url) => new Bun.CryptoHasher('sha256').update(url).dig
 
 export const countWords = (text) => text.split(/\s+/).filter(Boolean).length;
 
+// Tanggal terbit yang kosong atau tidak bisa dibaca tidak dianggap tua.
+export function isTooOld(article, maxAgeHours, now) {
+  if (maxAgeHours == null) return false;
+  const published = Date.parse(article.published_at);
+  return Number.isFinite(published) && now - published > maxAgeHours * 60 * 60 * 1000;
+}
+
 export function assertComplete(article, minWords) {
   if (!article.title || article.word_count < minWords) throw new IncompleteArticleError(article);
 }

@@ -104,7 +104,7 @@ async has(url) { ... }
 
 Jatah komentar tidak merata. Di jalur yang jika diubah diam-diam akan merusak data atau mengirim ganda, argumen kebenaran yang **dipadatkan** wajib ada. Jalur kritis project ini:
 
-- **Idempotensi:** bagaimana `articleId` diturunkan dan kenapa stabil antar-retry dan antar-siklus.
+- **Idempotensi:** bagaimana `articleId` diturunkan dan kenapa stabil antar-retry dan antar-jalan.
 - **Klasifikasi kegagalan:** kenapa 4xx tertentu tidak diulang sedangkan 408/429/5xx diulang; kenapa artikel tidak lengkap dihitung gagal dan tidak dicatat terkirim.
 - **Urutan:** kenapa `markSent` dipanggil setelah `publish` berhasil, bukan sebelumnya.
 - **Penulisan state yang aman:** kenapa tulis ke file sementara lalu `mv`.

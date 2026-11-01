@@ -6,14 +6,17 @@
     "timeoutMs": 15000,
     "retries": 3
   },
+  "timezone": "Asia/Jakarta",
+  "server": { "host": "127.0.0.1", "port": 3000 },
+  "shutdownTimeoutMs": 60000,
   "userAgent": "NewsScraperBot/1.0 (+mailto:admin@example.com)",
   "session": "newscraper",
-  "intervalMinutes": 30,
   "delayMs": 1500,
   "statePath": "data/sent.json",
   "sources": [
     {
       "name": "antaranews",
+      "schedule": "*/15 * * * *",
       "discovery": { "type": "rss", "url": "https://www.antaranews.com/rss/terkini.xml" },
       "pattern": "/berita/\\d+/",
       "waitFor": ".post-content",
@@ -24,6 +27,7 @@
     },
     {
       "name": "kompas",
+      "schedule": "0 * * * *",
       "discovery": { "type": "index", "url": "https://indeks.kompas.com/" },
       "pattern": "^https://[a-z]+\\.kompas\\.com/read/\\d{4}/\\d{2}/\\d{2}/",
       "minWords": 50,

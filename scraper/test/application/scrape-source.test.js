@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { ScrapeArticle } from '../../src/application/scrape-article.js';
-import { ScrapeSources } from '../../src/application/scrape-sources.js';
+import { ScrapeSource } from '../../src/application/scrape-source.js';
 import { createSource } from '../../src/domain/source.js';
 import { FakePageReader, FakePublisher, FakeSentStore, fakePage, silentLogger } from './fakes.js';
 
@@ -8,7 +8,7 @@ const longText = (n) => Array.from({ length: n }, (_, i) => `kata${i}`).join(' '
 
 function setup({ urls, pages, sent = [], publisher = new FakePublisher() }) {
   const sentStore = new FakeSentStore(sent);
-  const useCase = new ScrapeSources({
+  const useCase = new ScrapeSource({
     discoverer: { discover: async () => urls },
     scrapeArticle: new ScrapeArticle({ pageReader: new FakePageReader(pages), logger: silentLogger }),
     publisher,
@@ -21,9 +21,9 @@ function setup({ urls, pages, sent = [], publisher = new FakePublisher() }) {
 }
 
 const source = (overrides = {}) =>
-  createSource({ name: 'contoh', discovery: { type: 'rss', url: 'https://a.com/rss' }, minWords: 5, ...overrides });
+  createSource({ name: 'contoh', schedule: '*/15 * * * *', discovery: { type: 'rss', url: 'https://a.com/rss' }, minWords: 5, ...overrides });
 
-describe('ScrapeSources', () => {
+describe('ScrapeSource', () => {
   it('skips already-sent urls, publishes the rest, and records them as sent', async () => {
     const { useCase, publisher, sentStore } = setup({
       urls: ['u1', 'u2'],
@@ -31,10 +31,9 @@ describe('ScrapeSources', () => {
       sent: ['u1'],
     });
 
-    const [result] = await useCase.execute([source()]);
+    const stats = await useCase.execute(source());
 
-    expect(result).toEqual({ source: 'contoh', published: 1, failed: 0 });
-    expect(publisher.published).toHaveLength(1);
+    expect(stats).toEqual({ published: 1, skipped: 0, failed: 0 });
     const [record] = publisher.published;
     expect(record.source).toBe('contoh');
     expect(record.article.url).toBe('u2');
@@ -47,7 +46,7 @@ describe('ScrapeSources', () => {
       urls: ['u1', 'u2', 'u3'],
       pages: { u1: fakePage(longText(10)), u2: fakePage(longText(10)), u3: fakePage(longText(10)) },
     });
-    await useCase.execute([source({ maxArticles: 2 })]);
+    await useCase.execute(source({ maxArticles: 2 }));
     expect(publisher.published).toHaveLength(2);
   });
 
@@ -58,22 +57,39 @@ describe('ScrapeSources', () => {
       publisher: new FakePublisher({ failFor: ['down'] }),
     });
 
-    const [result] = await useCase.execute([source()]);
-
-    expect(result).toEqual({ source: 'contoh', published: 0, failed: 2 });
+    expect(await useCase.execute(source())).toEqual({ published: 0, skipped: 0, failed: 2 });
     expect(await sentStore.has('short')).toBe(false);
     expect(await sentStore.has('down')).toBe(false);
   });
 
-  it('keeps going with other sources when discovery fails', async () => {
+  it('finishes the current article, then stops when asked', async () => {
+    const { useCase, publisher } = setup({
+      urls: ['u1', 'u2', 'u3'],
+      pages: { u1: fakePage(longText(10)), u2: fakePage(longText(10)), u3: fakePage(longText(10)) },
+    });
+    let stop = false;
+    publisher.onPublish = () => (stop = true);
+
+    const stats = await useCase.execute(source(), { shouldStop: () => stop });
+
+    expect(stats).toEqual({ published: 1, skipped: 0, failed: 0 });
+  });
+
+  it('skips articles older than maxAgeHours and records them so they are not reopened', async () => {
+    const old = { ...fakePage(longText(10)), published_at: '2019-08-01T12:42:15+07:00' };
+    const fresh = { ...fakePage(longText(10)), published_at: '2026-10-31T20:00:00Z' };
+    const { useCase, publisher, sentStore } = setup({ urls: ['old', 'fresh'], pages: { old, fresh } });
+
+    const stats = await useCase.execute(source({ maxAgeHours: 48 }));
+
+    expect(stats).toEqual({ published: 1, skipped: 1, failed: 0 });
+    expect(publisher.published.map((r) => r.article.url)).toEqual(['fresh']);
+    expect(sentStore.sent.get('old').status).toBe('skipped:too-old');
+  });
+
+  it('propagates discovery errors to the caller', async () => {
     const { useCase } = setup({ urls: [], pages: {} });
-    useCase.discoverer = { discover: async (s) => { if (s.name === 'rusak') throw new Error('RSS down'); return []; } };
-
-    const results = await useCase.execute([source({ name: 'rusak' }), source({ name: 'sehat' })]);
-
-    expect(results).toEqual([
-      { source: 'rusak', error: 'RSS down' },
-      { source: 'sehat', published: 0, failed: 0 },
-    ]);
+    useCase.discoverer = { discover: async () => { throw new Error('RSS down'); } };
+    await expect(useCase.execute(source())).rejects.toThrow('RSS down');
   });
 });

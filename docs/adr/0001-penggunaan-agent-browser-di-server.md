@@ -54,7 +54,7 @@ Pilih **Opsi A**: scraper Bun mengambil daftar URL dari RSS lewat HTTP (atau dar
 
 **Alasan:**
 - Satu ekstraktor untuk semua situs; situs berbasis JavaScript dan artikel multi-halaman (Kompas) ditangani tanpa jalur kedua.
-- Volume saat ini kecil (`maxArticles` 10 per sumber per siklus, 2 sumber), sehingga ±2,5 dtk per artikel masih jauh di bawah interval 30 menit.
+- Volume saat ini kecil (`maxArticles` 10 per sumber per jalan, 2 sumber), sehingga ±2,5 dtk per artikel masih jauh di bawah jarak antar jadwal (paling rapat 15 menit; ADR-0002).
 - Ekstraksi berada di balik port `PageReader` (`src/application/ports.js`). Opsi C atau D dapat ditambahkan sebagai adapter baru tanpa mengubah usecase.
 
 ```mermaid
@@ -83,7 +83,7 @@ flowchart LR
 | OS | Linux x86_64 (mis. Ubuntu 24.04 LTS / Debian 12) | |
 | CPU / RAM | Mulai 2 vCPU / 4 GB | **Perkiraan**, belum diukur; Chrome memakan ratusan MB per session |
 | Disk | ≥ 20 GB | Chrome ±200 MB; sisanya data dan log |
-| Bun | ≥ 1.2 (teruji 1.4.4) | Runtime scraper |
+| Bun | ≥ 1.4.4 | Runtime scraper; `Bun.cron` untuk penjadwalan (ADR-0002) |
 | Node.js + npm | Versi LTS | Hanya untuk memasang agent-browser lewat npm |
 | Chrome + library sistem | `agent-browser install --with-deps` | Butuh root atau sudo |
 | Jaringan | Outbound 80/443 | Tidak perlu port inbound |
@@ -123,14 +123,14 @@ Semua aturan ini sudah diterapkan di `src/infrastructure/browser/agent-browser-c
 
 ### 5.4 Konkurensi
 
-Sumber dan artikel diproses berurutan dalam **satu session** browser, dengan jeda `delayMs` antar artikel. Ini sekaligus menjadi batas laju per situs. Paralelisme (beberapa session) belum diperlukan pada volume saat ini.
+Sumber dan artikel diproses berurutan dalam **satu session** browser, dengan jeda `delayMs` antar artikel. Ini sekaligus menjadi batas laju per situs. Paralelisme (beberapa session) belum diperlukan pada volume saat ini. Penjadwalan per sumber dan antrean serialnya diatur di [ADR-0002](0002-scraper-sebagai-server-dengan-jadwal-cron-per-sumber.md).
 
 ### 5.5 Keandalan
 
 | Risiko | Mitigasi saat ini | Belum ada |
 |---|---|---|
-| Penerima down atau lambat | Retry dengan jeda 1s, 2s, 4s; artikel tidak dicatat terkirim sehingga dicoba lagi di siklus berikutnya | - |
-| Chrome crash atau daemon macet | Perintah gagal dan artikel dihitung `failed`; siklus berikutnya mencoba lagi | Restart session otomatis setelah gagal berturut-turut |
+| Penerima down atau lambat | Retry dengan jeda 1s, 2s, 4s; artikel tidak dicatat terkirim sehingga dicoba lagi pada jalan berikutnya | - |
+| Chrome crash atau daemon macet | Perintah gagal dan artikel dihitung `failed`; jalan berikutnya mencoba lagi | Restart session otomatis setelah gagal berturut-turut |
 | Proses mati saat menulis state | State ditulis ke file sementara lalu dipindah (`mv`) | - |
 | Update agent-browser mengubah format output | Pin versi `0.41.1` | Test integrasi otomatis |
 | Memori bocor karena browser hidup lama | - | Restart session berkala |
@@ -157,7 +157,7 @@ agent-browser tidak menyediakan image resmi untuk runtime; folder `docker/` di r
 
 ### 5.8 Observabilitas
 
-Log JSON per baris di stdout (daftar lengkap: README bagian "Log"). Yang perlu dipantau per siklus: `found`/`pending` per sumber, rasio `failed` terhadap `published`, `source failed`, dan durasi siklus dibanding `intervalMinutes`.
+Log JSON per baris di stdout (daftar lengkap: README bagian "Log") dan endpoint `GET /health` serta `GET /status` (ADR-0002). Yang perlu dipantau per sumber: `found`/`pending`, rasio `failed` terhadap `published`, `run failed`, dan `durationMs` dibanding jarak antar jadwal.
 
 ---
 
@@ -177,7 +177,7 @@ Log JSON per baris di stdout (daftar lengkap: README bagian "Log"). Yang perlu d
 
 ## 7. Kapan ditinjau ulang
 
-- Durasi satu siklus mendekati `intervalMinutes`, atau jumlah sumber/artikel naik signifikan: pertimbangkan **Opsi C** (adapter `PageReader` berbasis HTTP untuk situs yang tidak butuh JavaScript).
+- Durasi jalan sebuah sumber mendekati jarak antar jadwalnya, atau jumlah sumber/artikel naik signifikan: pertimbangkan **Opsi C** (adapter `PageReader` berbasis HTTP untuk situs yang tidak butuh JavaScript).
 - Banyak situs target memblokir browser otomatis atau IP datacenter: pertimbangkan **Opsi E** atau proxy.
 - Diperlukan AI agent yang mengoperasikan browser: pertimbangkan integrasi MCP (`agent-browser mcp`).
 

@@ -2,14 +2,17 @@
 
 Mengambil berita (URL, metadata, isi penuh, URL gambar) lewat **agent-browser**, lalu mengirim setiap artikel ke sistem luar melalui **HTTP POST/PATCH/PUT**. Sistem penerima bebas (Go, PHP, n8n, dan lainnya); syaratnya hanya bisa menerima JSON lewat HTTP.
 
+Scraper berjalan sebagai **server** yang hidup terus: setiap sumber dijalankan sesuai jadwal cron-nya sendiri, dan kondisinya bisa dilihat lewat `GET /health` dan `GET /status`.
+
 ```mermaid
 flowchart LR
-    A["RSS / halaman indeks"] --> B["Daftar URL artikel"]
+    S["Jadwal cron<br/>per sumber"] --> A["RSS / halaman indeks"]
+    A --> B["Daftar URL artikel"]
     B --> C{"Sudah terkirim?"}
     C -- ya --> X["Dilewati"]
     C -- belum --> D["agent-browser + Chrome<br/>menjalankan extract-article.js"]
     D --> E{"Judul ada dan<br/>kata ≥ minWords?"}
-    E -- tidak --> F["Gagal: dicoba lagi<br/>di siklus berikutnya"]
+    E -- tidak --> F["Gagal: dicoba lagi<br/>pada jalan berikutnya"]
     E -- ya --> G["Kirim JSON ke<br/>sistem penerima"]
     G -- 2xx --> H["Dicatat terkirim<br/>(data/sent.json)"]
     G -- gagal --> F
@@ -99,7 +102,7 @@ agent-browser **tidak memakai AI atau token AI**; ia alat otomasi browser. Kata 
 
 | Komponen | Versi teruji | Keterangan |
 |---|---|---|
-| [Bun](https://bun.sh) | 1.4.4 | Runtime scraper; tanpa dependency, tidak perlu `bun install` |
+| [Bun](https://bun.sh) | 1.4.4 | Runtime scraper (`engines.bun >= 1.4.4` karena `Bun.cron`); tanpa dependency, tidak perlu `bun install` |
 | agent-browser | 0.41.1 | Dipasang lewat npm, jadi Node.js/npm juga dibutuhkan |
 | Chrome for Testing | 156 | Diunduh oleh `agent-browser install` |
 
@@ -113,13 +116,23 @@ agent-browser install            # Linux: agent-browser install --with-deps (bel
 Semua perintah dijalankan dari folder `scraper/`.
 
 ```bash
-bun run dry-run     # 1 siklus: tampilkan payload, tidak mengirim, tidak menulis state
-bun run once        # 1 siklus lalu keluar (cocok untuk cron)
-bun start           # jalan terus, 1 siklus tiap intervalMinutes
+bun start           # mode server: jadwalkan setiap sumber, buka /health dan /status
+bun run once        # semua sumber sekali jalan lalu keluar
+bun run dry-run     # sekali jalan: tampilkan payload, tidak mengirim, tidak menulis state
 bun test            # unit test bun:test (tanpa browser dan jaringan)
 ```
 
-Setara dengan `bun src/main.js [--once] [--dry-run] [--config <path>]`. Argumen lain ditolak dengan pesan `unknown argument`.
+Setara dengan `bun src/main.js [--once] [--dry-run] [--source <nama>] [--config <path>]`:
+
+| Argumen | Fungsi |
+|---|---|
+| (tanpa `--once`) | Mode server, berjalan sampai dihentikan |
+| `--once` | Jalankan sumber sekali secara berurutan, lalu keluar |
+| `--source <nama>` | Batasi ke satu sumber (di kedua mode); nama yang tidak ada ditolak dengan daftar nama yang tersedia |
+| `--dry-run` | Tampilkan payload tanpa mengirim dan tanpa menulis `statePath` (di kedua mode) |
+| `--config <path>` | File config lain (default `config.json`) |
+
+Argumen lain ditolak dengan pesan `unknown argument`. Pemicu manual sebuah sumber memakai `bun src/main.js --once --source <nama>`; server tidak menyediakan endpoint pemicu.
 
 Uji lokal dengan penerima tiruan:
 
@@ -129,6 +142,23 @@ bun run once        # terminal 2: payload tersimpan di data/received.jsonl
 ```
 
 `--dry-run` tetap membaca `data/sent.json`, jadi artikel yang sudah terkirim ikut dilewati.
+
+### Mode server
+
+Keputusan desain: [ADR-0002](../docs/adr/0002-scraper-sebagai-server-dengan-jadwal-cron-per-sumber.md).
+
+- Setiap sumber dijadwalkan dengan `Bun.cron` sesuai `sources[].schedule`, dalam zona waktu `timezone`. Saat server start, tidak ada sumber yang langsung dijalankan; setiap sumber menunggu jadwal berikutnya.
+- Sumber dijalankan lewat **antrean serial**: jika dua jadwal jatuh bersamaan, sumber kedua berstatus `queued` sampai sumber pertama selesai (satu session browser, satu file state). Satu sumber tidak pernah berjalan bertumpuk dengan dirinya sendiri; jadwal yang terlewat selama ia berjalan tidak dikejar.
+- Error di satu sumber dicatat di `lastRun.error` dan log `run failed`; server dan sumber lain tetap berjalan.
+
+| Endpoint | Respons |
+|---|---|
+| `GET /health` | `200 {"status":"ok","uptimeSeconds":...}`; `503 {"status":"stopping"}` selama penghentian |
+| `GET /status` | `timezone` dan per sumber: `name`, `schedule`, `nextRunAt`, `state` (`idle`/`queued`/`running`), `lastRun` (`startedAt`, `finishedAt`, `durationMs`, `published`, `skipped`, `failed`, `error`) atau `null` |
+
+Endpoint lain membalas `404`, metode selain `GET` membalas `405`. Server mendengarkan di `server.host` (default `127.0.0.1`); buka ke jaringan hanya di balik firewall atau reverse proxy. Status disimpan di memori dan kosong lagi setelah restart.
+
+**Graceful shutdown** (`SIGINT`/`SIGTERM`, mis. Ctrl+C atau `systemctl stop`): jadwal dihentikan, `/health` membalas `503`, sumber yang mengantre dibatalkan, artikel yang sedang diproses diselesaikan, lalu browser dan server HTTP ditutup dan proses keluar dengan kode `0`. Penantian dibatasi `shutdownTimeoutMs` sebagai pengaman; artikel yang belum selesai tidak dicatat terkirim dan diulang pada jadwal berikutnya. Sinyal kedua memaksa keluar dengan kode `1`.
 
 ### Runtime: Bun
 
@@ -159,15 +189,23 @@ Pengecualian: `src/infrastructure/browser/scripts/extract-article.js` berjalan d
 | `webhook.retries` | `3` | Jumlah percobaan ulang setelah percobaan pertama |
 | `userAgent` | `NewsScraperBot/1.0` | User-Agent untuk request RSS. Halaman artikel dibuka dengan User-Agent bawaan Chrome |
 | `session` | `newscraper` | Nama session agent-browser |
-| `intervalMinutes` | `30` | Jeda antar siklus pada mode jalan terus |
+| `timezone` | `Asia/Jakarta` | Zona waktu IANA untuk semua jadwal; nama tidak valid ditolak saat start |
+| `server.host` | `127.0.0.1` | Alamat endpoint `/health` dan `/status` |
+| `server.port` | `3000` | Port endpoint; bisa ditimpa env `PORT` |
+| `shutdownTimeoutMs` | `60000` | Batas tunggu artikel yang sedang diproses saat server dihentikan |
 | `delayMs` | `1500` | Jeda antar artikel |
 | `statePath` | `data/sent.json` | File pencatat URL terkirim; path relatif dihitung dari folder `config.json` |
-| `sources[].name` | (wajib) | Nama sumber, dikirim sebagai `source` di payload |
-| `sources[].discovery` | (wajib) | `{ "type": "rss", "url": ... }` (diambil lewat HTTP) atau `{ "type": "index", "url": ... }` (dibuka lewat browser) |
+| `sources[].name` | (wajib) | Nama sumber, unik; dikirim sebagai `source` di payload |
+| `sources[].schedule` | (wajib) | Ekspresi cron 5 field (menit jam tanggal bulan hari), mis. `*/15 * * * *`, atau nickname `@hourly`, `@daily`. Ekspresi tidak valid atau yang tidak pernah jatuh ditolak saat start |
+| `sources[].discovery.type` | (wajib) | `rss` (diambil lewat HTTP) atau `index` (dibuka lewat browser) |
+| `sources[].discovery.url` | (wajib) | URL feed/indeks. Boleh memuat `{date}` (YYYY-MM-DD dalam `timezone`) dan `{page}` (mulai 1) |
+| `sources[].discovery.days` | `1` | Jumlah tanggal yang dibaca: hari ini, lalu mundur. Nilai `2` membaca indeks kemarin juga, agar berita menjelang tengah malam tidak terlewat. Lebih dari 1 wajib memakai `{date}` |
+| `sources[].discovery.maxPages` | `1` | Halaman indeks per tanggal; berhenti lebih awal di halaman yang tidak menghasilkan URL baru. Lebih dari 1 wajib memakai `{page}` |
 | `sources[].pattern` | - | Regex URL artikel. Awali dengan `^https://` agar link iklan yang memuat URL artikel di query tidak ikut |
 | `sources[].waitFor` | - | Selector yang ditunggu setelah halaman dibuka; untuk situs yang isinya dirender JavaScript |
 | `sources[].minWords` | `50` | Artikel dengan isi lebih pendek dianggap tidak lengkap |
-| `sources[].maxArticles` | tanpa batas | Batas artikel **baru** per siklus |
+| `sources[].maxArticles` | tanpa batas | Batas artikel **baru** per jalan |
+| `sources[].maxAgeHours` | tanpa batas | Artikel dengan `published_at` lebih tua dilewati (tidak dikirim) dan dicatat di `statePath` dengan status `skipped:too-old` agar tidak dibuka ulang. Artikel tanpa tanggal yang terbaca tidak dilewati |
 | `sources[].preferAllPage` | `true` | Artikel multi-halaman: pakai versi "tampilkan semua" jika ada |
 | `sources[].maxPages` | `10` | Batas halaman yang diikuti untuk satu artikel |
 
@@ -184,6 +222,7 @@ cp .env.example .env
 | `WEBHOOK_URL` | Menimpa `webhook.url` |
 | `WEBHOOK_METHOD` | Menimpa `webhook.method` |
 | `WEBHOOK_TOKEN` | Dikirim sebagai `Authorization: Bearer <token>` |
+| `PORT` | Menimpa `server.port` |
 | `AGENT_BROWSER_BIN` | Path binary agent-browser; jika kosong, dicari otomatis di PATH |
 
 Variabel yang kosong (mis. `WEBHOOK_TOKEN=`) dianggap tidak diisi. Di Windows, tulis path dengan `/` karena di dalam tanda kutip ganda Bun membaca `\n` sebagai baris baru.
@@ -227,7 +266,7 @@ Authorization: Bearer <WEBHOOK_TOKEN>
 
 | Field | Arti |
 |---|---|
-| `id` | 32 karakter pertama SHA-256 dari `article.url`. Stabil antar-retry dan antar-siklus, sehingga penerima bisa melakukan upsert atau menolak duplikat. Sama dengan header `Idempotency-Key` |
+| `id` | 32 karakter pertama SHA-256 dari `article.url`. Stabil antar-retry dan antar-jalan, sehingga penerima bisa melakukan upsert atau menolak duplikat. Sama dengan header `Idempotency-Key` |
 | `source` | `sources[].name` dari config |
 | `scraped_at` | Waktu ekstraksi, ISO 8601 UTC |
 | `article.url` | URL artikel hasil discovery setelah normalisasi (parameter `utm_*`, `fbclid`, `gclid`, dan fragment dibuang) |
@@ -250,17 +289,17 @@ flowchart TD
     R -- "2xx" --> OK["Sukses: URL dicatat terkirim"]
     R -- "408, 429, 5xx,<br/>timeout, koneksi gagal" --> RT{"Masih ada jatah<br/>retries?"}
     RT -- ya --> W["Tunggu 1s, 2s, 4s, ..."] --> S
-    RT -- tidak --> NX["Gagal: tidak dicatat,<br/>dicoba lagi di siklus berikutnya"]
+    RT -- tidak --> NX["Gagal: tidak dicatat,<br/>dicoba lagi pada jalan berikutnya"]
     R -- "4xx lainnya" --> NX
 ```
 
 | Status dari penerima | Perilaku scraper |
 |---|---|
 | `2xx` | Sukses; URL dicatat di `statePath` dan tidak dikirim lagi |
-| `408`, `429`, `5xx`, timeout, koneksi gagal | Diulang sampai `retries` kali dengan jeda 1s, 2s, 4s, ...; jika tetap gagal, dicoba lagi di siklus berikutnya |
-| `4xx` lainnya | Tidak diulang di siklus ini (kesalahan data/konfigurasi); dicoba lagi di siklus berikutnya |
+| `408`, `429`, `5xx`, timeout, koneksi gagal | Diulang sampai `retries` kali dengan jeda 1s, 2s, 4s, ...; jika tetap gagal, dicoba lagi pada jalan berikutnya sumber itu |
+| `4xx` lainnya | Tidak diulang pada jalan ini (kesalahan data/konfigurasi); dicoba lagi pada jalan berikutnya |
 
-URL dicatat terkirim hanya setelah respons `2xx` (`src/application/scrape-sources.js`), jadi kegagalan apa pun tidak pernah membuat artikel hilang dari antrean.
+URL dicatat terkirim hanya setelah respons `2xx` (`src/application/scrape-source.js`), jadi kegagalan apa pun tidak pernah membuat artikel hilang dari antrean.
 
 ## Artikel multi-halaman
 
@@ -301,6 +340,8 @@ Hasil uji pada artikel Kompas 2 halaman (Windows lokal, 1 November 2026):
 flowchart TB
     M["main.js<br/>composition root"]
     subgraph INF["infrastructure: adapter (API Bun)"]
+        SC["BunCronScheduler"]
+        HS["StatusServer"]
         AB["AgentBrowserCli<br/>BrowserPageReader"]
         DS["SourceUrlDiscoverer<br/>rss-feed"]
         PB["WebhookPublisher<br/>LogPublisher"]
@@ -308,7 +349,9 @@ flowchart TB
         CF["loadConfig<br/>createJsonLogger"]
     end
     subgraph APP["application: usecase + port"]
-        SS["ScrapeSources"]
+        GS["gracefulShutdown"]
+        Q["SourceRunQueue"]
+        SS["ScrapeSource"]
         SA["ScrapeArticle"]
         PT["ports.js"]
     end
@@ -318,6 +361,8 @@ flowchart TB
     M --> INF
     M --> APP
     INF -. mengimplementasikan .-> PT
+    GS --> Q
+    Q --> SS
     SS --> SA
     APP --> DOM
     INF --> DOM
@@ -336,15 +381,18 @@ scraper/
 ├─ .env.example                               contoh variabel lingkungan (salin ke .env)
 ├─ package.json
 ├─ src/
-│  ├─ main.js                                 composition root + CLI
+│  ├─ main.js                                 composition root: mode server dan sekali jalan
 │  ├─ domain/
-│  │  ├─ article.js                           ID artikel, validasi, penggabungan halaman
-│  │  ├─ source.js                            definisi sumber + nilai default
+│  │  ├─ article.js                           ID artikel, validasi, umur artikel, penggabungan halaman
+│  │  ├─ discovery.js                         placeholder {date}/{page} dan daftar tanggal
+│  │  ├─ source.js                            definisi sumber, validasi jadwal, nilai default
 │  │  └─ url.js                               normalisasi URL
 │  ├─ application/
-│  │  ├─ ports.js                             kontrak: PageReader, UrlDiscoverer, ArticlePublisher, SentStore, Logger
+│  │  ├─ ports.js                             kontrak: PageReader, UrlDiscoverer, ArticlePublisher, SentStore, Scheduler, Logger
 │  │  ├─ scrape-article.js                    usecase: 1 artikel lengkap (multi-halaman)
-│  │  └─ scrape-sources.js                    usecase: 1 siklus semua sumber
+│  │  ├─ scrape-source.js                     usecase: 1 kali jalan untuk 1 sumber
+│  │  ├─ source-run-queue.js                  antrean serial + status per sumber
+│  │  └─ graceful-shutdown.js                 urutan penghentian server
 │  └─ infrastructure/
 │     ├─ browser/
 │     │  ├─ agent-browser-cli.js              pembungkus CLI agent-browser
@@ -352,19 +400,22 @@ scraper/
 │     │  └─ scripts/extract-article.js        berjalan di dalam halaman: JSON-LD → OpenGraph → DOM
 │     ├─ discovery/
 │     │  ├─ rss-feed.js                       link dari RSS/Atom
-│     │  └─ source-url-discoverer.js          UrlDiscoverer: RSS atau halaman indeks
+│     │  └─ source-url-discoverer.js          UrlDiscoverer: RSS atau indeks, per tanggal dan per halaman
 │     ├─ publishing/
 │     │  ├─ payload.js                        format JSON untuk penerima
 │     │  ├─ webhook-publisher.js              ArticlePublisher: HTTP + retry
 │     │  └─ log-publisher.js                  ArticlePublisher untuk --dry-run
 │     ├─ persistence/json-file-sent-store.js  SentStore: catatan URL terkirim
+│     ├─ scheduling/bun-cron-scheduler.js     Scheduler: Bun.cron dengan zona waktu
+│     ├─ http/status-server.js                Bun.serve: GET /health, GET /status
 │     ├─ config/load-config.js                config.json + env
 │     └─ logging/json-logger.js               Logger: JSON per baris
 ├─ tools/mock-receiver.js                     penerima tiruan untuk uji coba
 └─ test/
-   ├─ domain/article.test.js
-   ├─ application/                            usecase diuji dengan fakes.js
-   └─ infrastructure/load-config.test.js
+   ├─ domain/                                 artikel, sumber, discovery
+   ├─ application/                            usecase, antrean, shutdown diuji dengan fakes.js
+   ├─ infrastructure/                         config, discoverer, scheduler, server status
+   └─ fixtures/                               config tidak valid untuk test
 ```
 
 ### Menambah kemampuan baru
@@ -383,14 +434,19 @@ Satu baris JSON per kejadian di stdout (`fatal` di stderr):
 
 | `msg` | Field penting |
 |---|---|
-| `starting` | `webhook`, `dryRun` |
+| `starting` | `mode` (`server`/`once`), `sources`, `webhook`, `dryRun` |
+| `scheduled` | `source`, `schedule`, `nextRunAt` |
+| `server listening` | `host`, `port`, `timezone` |
+| `run queued` | `source`, `position` (menunggu sumber lain selesai) |
+| `run started` | `source` |
 | `discovered` | `source`, `found`, `pending` |
 | `published` | `source`, `url`, `id`, `status` |
 | `dry-run` | payload dengan `content_text` dipotong 120 karakter |
+| `article skipped` | `source`, `url`, `reason` (`too old`), `published_at` |
 | `article failed` | `source`, `url`, `error` |
-| `source done` | `source`, `published`, `failed` |
-| `source failed` | `source`, `error` (mis. RSS tidak bisa diambil) |
-| `sleeping`, `shutting down`, `stopped` | siklus dan penghentian |
+| `run finished` | `source`, `published`, `skipped`, `failed`, `durationMs` |
+| `run failed` | `source`, `error` (mis. RSS tidak bisa diambil), `durationMs` |
+| `shutting down`, `shutdown timeout`, `stopped` | penghentian; `forced exit` saat sinyal kedua |
 
 ## Catatan
 
@@ -399,5 +455,9 @@ Satu baris JSON per kejadian di stdout (`fatal` di stderr):
 - Pada kompas.com, `agent-browser open` kadang mengembalikan error walaupun halaman sudah terbuka; adapter mengecek ulang dengan `get url`.
 - tribunnews.com memblokir browser otomatis ("Akses ditolak").
 - **Masalah kualitas data yang diketahui:** sisa label "Baca juga:", paragraf promosi (Kompas), gambar tidak terkait dari blok rekomendasi, `authors` berisi nama penerbit (Kompas), `section` kosong.
-- Scraper **tidak memeriksa `robots.txt` secara otomatis**. Periksa `robots.txt` dan ToS setiap situs saat menambah sumber, dan jangan memublikasikan ulang isi berita tanpa izin. Footer artikel antaranews melarang pengindeksan otomatis untuk AI tanpa izin tertulis.
+- Scraper **tidak memeriksa `robots.txt` secara otomatis**. Periksa `robots.txt` dan ToS setiap situs saat menambah sumber, dan jangan memublikasikan ulang isi berita tanpa izin.
+- **Larangan penerbit yang sudah diketahui:**
+  - `robots.txt` kompas.com melarang scraping dan data mining otomatis tanpa izin tertulis dari PT Kompas Cyber Media. Sumber `kompas` di `config.json` tidak boleh dijalankan sebelum izin itu ada.
+  - Footer artikel antaranews melarang pengindeksan otomatis untuk AI tanpa izin tertulis.
+- Indeks kompas.com dikelompokkan per tanggal WIB dan terbagi banyak halaman (26 halaman pada 1 November 2026); hanya halaman 1 tanggal hari ini yang terbaca jika `discovery.days`/`maxPages` tidak diatur.
 - `data/sent.json` bertambah terus tanpa pembersihan.

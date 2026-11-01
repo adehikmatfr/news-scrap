@@ -4,6 +4,7 @@ Scraper berita berbasis [Bun](https://bun.sh) dan [agent-browser](https://github
 
 ```mermaid
 flowchart LR
+    CR["Jadwal cron<br/>per sumber"] --> B
     A["Situs berita<br/>(RSS / halaman indeks)"] --> B["Scraper (Bun)"]
     B -- "Bun.spawn" --> C["agent-browser<br/>+ Chrome headless"]
     C -- "extract-article.js<br/>berjalan di halaman" --> B
@@ -16,13 +17,14 @@ flowchart LR
 - **Data lengkap per artikel:** judul, deskripsi, penulis, tanggal terbit/diperbarui, seksi, tag, isi teks penuh, jumlah kata, gambar utama, dan gambar di dalam isi (termasuk lazy-load).
 - **Artikel multi-halaman:** memakai versi "tampilkan semua" jika ada, atau mengikuti halaman 2, 3, ... lalu menggabungkan isinya.
 - **Pengiriman andal:** ID artikel stabil (`Idempotency-Key`), retry dengan jeda bertahap untuk `408`/`429`/`5xx`, dan artikel baru dicatat terkirim setelah penerima membalas `2xx`.
-- **Tanpa duplikat:** artikel yang sudah terkirim dilewati di siklus berikutnya.
+- **Tanpa duplikat:** artikel yang sudah terkirim dilewati pada jalan berikutnya.
+- **Server dengan jadwal cron per sumber:** setiap sumber punya `schedule` sendiri (mis. tiap 15 menit, tiap jam), dijalankan bergiliran lewat antrean serial, dengan `GET /health`, `GET /status`, dan graceful shutdown.
 - **Tanpa token AI:** seluruh alur deterministik; agent-browser hanya alat otomasi browser.
 - **Tanpa dependency npm:** hanya API Bun; clean architecture dengan unit test `bun:test`.
 
 ## Mulai cepat
 
-Kebutuhan: Bun ≥ 1.2, Node.js/npm (untuk memasang agent-browser).
+Kebutuhan: Bun ≥ 1.4.4, Node.js/npm (untuk memasang agent-browser).
 
 ```bash
 # 1. agent-browser + Chrome
@@ -41,7 +43,7 @@ bun run mock                  # terminal 1: http://localhost:8080
 bun run once                  # terminal 2: hasil di data/received.jsonl
 ```
 
-Jalankan terus dengan `bun start` (satu siklus tiap `intervalMinutes`), dan jalankan unit test dengan `bun test`.
+Jalankan sebagai server dengan `bun start`: setiap sumber berjalan sesuai `sources[].schedule` di `config.json`, dan kondisinya bisa dilihat di `http://127.0.0.1:3000/status`. Unit test: `bun test`.
 
 ## Contoh data yang dikirim
 
@@ -73,16 +75,16 @@ Daftar field lengkap, header, dan perilaku terhadap setiap status respons ada di
 | Path | Isi |
 |---|---|
 | [`scraper/`](scraper/) | Kode scraper (Bun), konfigurasi, test, dan penerima tiruan. Dokumentasi utama: [scraper/README.md](scraper/README.md) |
-| [`docs/adr/`](docs/adr/) | Architecture Decision Record, mis. [ADR-0001: agent-browser di server](docs/adr/0001-penggunaan-agent-browser-di-server.md) |
+| [`docs/adr/`](docs/adr/) | Architecture Decision Record: [ADR-0001 agent-browser di server](docs/adr/0001-penggunaan-agent-browser-di-server.md), [ADR-0002 server dengan jadwal cron per sumber](docs/adr/0002-scraper-sebagai-server-dengan-jadwal-cron-per-sumber.md) |
 | [`docs/reserch/`](docs/reserch/) | Riset perbandingan tools scraping berita |
 | [`.claude/`](.claude/) | Konteks dan skill untuk Claude Code: aturan project, gaya komentar, penulisan dokumen, cara menambah sumber berita |
 
 ## Sumber berita yang dikonfigurasi
 
-| Sumber | Discovery | Catatan |
-|---|---|---|
-| antaranews.com | RSS `/rss/terkini.xml` | Artikel satu halaman |
-| kompas.com | Halaman indeks `indeks.kompas.com` | Artikel sering multi-halaman |
+| Sumber | Jadwal | Discovery | Catatan |
+|---|---|---|---|
+| antaranews.com | `*/15 * * * *` (tiap 15 menit) | RSS `/rss/terkini.xml` | Artikel satu halaman |
+| kompas.com | `0 * * * *` (tiap jam) | Halaman indeks `indeks.kompas.com` | **Jangan dijalankan tanpa izin tertulis:** `robots.txt` Kompas melarang scraping otomatis |
 
 Sumber baru ditambahkan di `scraper/config.json`. Periksa `robots.txt` dan ToS situs terlebih dahulu; scraper tidak memeriksanya otomatis.
 

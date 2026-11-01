@@ -48,6 +48,14 @@
  */
 
 /**
+ * Penjadwal per sumber. `handler` yang mengembalikan Promise ditunggu sebelum jadwal berikutnya dihitung.
+ * @typedef {object} Scheduler
+ * @property {(source: object, handler: () => Promise<unknown>) => void} schedule
+ * @property {(source: object, from?: Date) => Date|null} nextRun
+ * @property {() => void} stopAll
+ */
+
+/**
  * @typedef {object} Logger
  * @property {(msg: string, fields?: object) => void} info
  * @property {(msg: string, fields?: object) => void} warn

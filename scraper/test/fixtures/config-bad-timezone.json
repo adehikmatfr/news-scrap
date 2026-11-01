@@ -1,0 +1,7 @@
+{
+  "webhook": { "url": "http://localhost:8080/articles" },
+  "timezone": "Mars/Olympus",
+  "sources": [
+    { "name": "a", "schedule": "*/15 * * * *", "discovery": { "type": "rss", "url": "https://a.example.com/rss" } }
+  ]
+}
