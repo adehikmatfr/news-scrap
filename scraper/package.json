@@ -1,0 +1,19 @@
+{
+  "name": "news-scraper",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "author": "adehikmatfr",
+  "description": "Scraper berita berbasis agent-browser yang mengirim artikel ke webhook",
+  "type": "module",
+  "engines": {
+    "bun": ">=1.2"
+  },
+  "scripts": {
+    "start": "bun src/main.js",
+    "once": "bun src/main.js --once",
+    "dry-run": "bun src/main.js --once --dry-run",
+    "mock": "bun tools/mock-receiver.js",
+    "test": "bun test"
+  }
+}

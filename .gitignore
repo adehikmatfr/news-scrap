@@ -1,0 +1,16 @@
+# Rahasia dan data lokal
+.env
+.env.*
+!.env.example
+scraper/data/
+
+# Pengaturan Claude Code pribadi
+.claude/settings.local.json
+
+# Sistem operasi dan editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+node_modules/
