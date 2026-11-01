@@ -158,6 +158,8 @@ Agar referensi tidak menghitung teks yang jelas bukan berita, aturan `NOISE_LINE
 
 Gambar di dalam isi viva: 12/27 → 24/27. Judul, tanggal, dan penulis tetap 100% cocok. Satu paragraf okezone yang tercatat hilang adalah kalimat promosi "Sports Okezone menyajikan informasi terbaru…", yang sengaja dibuang ekstraktor tetapi masih dihitung referensi.
 
+Setelah kalimat promosi kanal ("… menyajikan informasi/berita terbaru") ditambahkan ke aturan bukan-isi referensi, okezone diukur ulang dengan ketiga driver: recall 100%, precision 100%, tanpa paragraf hilang. Pengukuran ketiga driver di 8 sumber (72 pengukuran) memberi recall 100% dan precision 99,9%, identik untuk agent-browser, CDP Bun, dan Playwright.
+
 Pemeriksaan silang 3 driver (sindonews dan viva, 6 artikel): agent-browser, CDP Bun, dan Playwright sama-sama recall 100% dan presisi 100%.
 
 **Belum diuji:** kompas (belum ada izin), jadi pengaruh perubahan ini pada `.read__content` dan pagination Kompas belum terukur. Situs di luar 8 sumber ini belum diukur; heuristik skor dirancang untuk itu, tetapi belum dibuktikan.

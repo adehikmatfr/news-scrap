@@ -44,9 +44,9 @@ function exclusionOf(el, extra) {
   return TEXT_ONLY_TAGS.has(tag) ? 'text' : null;
 }
 // Paragraf yang terlihat di wadah tetapi bukan isi berita: label navigasi/iklan, placeholder video,
-// inisial atau kredit redaksi dalam kurung, dan pernyataan hak cipta penerbit.
+// inisial atau kredit redaksi dalam kurung, pernyataan hak cipta penerbit, dan promosi kanal.
 const NOISE_LINE =
-  /^(baca juga|baca:|simak juga|lihat juga|saksikan juga|scroll to continue|advertisement|ikuti (berita|kami)|dapatkan (berita|update)|dilarang (keras )?mengambil konten|\[gambas:[^\]]*\]$|\([\p{L} .'/-]{2,60}\)$)/iu;
+  /^(baca juga|baca:|simak juga|lihat juga|saksikan juga|scroll to continue|advertisement|ikuti (berita|kami)|dapatkan (berita|update)|dilarang (keras )?mengambil konten|\[gambas:[^\]]*\]$|\([\p{L} .'/-]{2,60}\)$)|\bmenyajikan (informasi|berita) terbaru\b/iu;
 
 const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', mdash: '—', ndash: '–', hellip: '…', rsquo: '’', lsquo: '‘', rdquo: '”', ldquo: '“' };
 const decode = (s) =>
@@ -371,4 +371,4 @@ if (import.meta.main) {
   });
 }
 
-export { readReference, REFERENCE };
+export { fetchReference, readReference, REFERENCE, score };

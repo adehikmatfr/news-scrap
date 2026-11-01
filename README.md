@@ -76,7 +76,7 @@ Daftar field lengkap, header, dan perilaku terhadap setiap status respons ada di
 | Path | Isi |
 |---|---|
 | [`scraper/`](scraper/) | Kode scraper (Bun), konfigurasi, test, dan penerima tiruan. Dokumentasi utama: [scraper/README.md](scraper/README.md) |
-| [`docs/adr/`](docs/adr/) | Architecture Decision Record: [ADR-0001 agent-browser di server](docs/adr/0001-penggunaan-agent-browser-di-server.md), [ADR-0002 server dengan jadwal cron per sumber](docs/adr/0002-scraper-sebagai-server-dengan-jadwal-cron-per-sumber.md), [ADR-0003 driver browser: agent-browser, Playwright, atau CDP](docs/adr/0003-driver-browser-agent-browser-playwright-atau-cdp.md) |
+| [`docs/adr/`](docs/adr/) | Architecture Decision Record: [ADR-0001 agent-browser di server](docs/adr/0001-penggunaan-agent-browser-di-server.md), [ADR-0002 server dengan jadwal cron per sumber](docs/adr/0002-scraper-sebagai-server-dengan-jadwal-cron-per-sumber.md), [ADR-0003 driver browser: agent-browser, Playwright, atau CDP](docs/adr/0003-driver-browser-agent-browser-playwright-atau-cdp.md), [ADR-0004 ekstraksi dengan Hermes Agent (ditolak)](docs/adr/0004-ekstraksi-artikel-dengan-hermes-agent.md) |
 | [`docs/reserch/`](docs/reserch/) | Riset perbandingan tools scraping berita |
 | [`.claude/`](.claude/) | Konteks dan skill untuk Claude Code: aturan project, gaya komentar, penulisan dokumen, cara menambah sumber berita |
 

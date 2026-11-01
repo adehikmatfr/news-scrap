@@ -11,6 +11,7 @@ Bahasa komunikasi dan komentar kode: **Bahasa Indonesia**. Gaya komentar mengiku
 | `scraper/` | **Kode utama** (runtime **Bun** ≥ 1.4.4, ESM, satu dependency: `playwright-core`). Baca `scraper/README.md` |
 | `docs/adr/0002-scraper-sebagai-server-dengan-jadwal-cron-per-sumber.md` | ADR: mode server, jadwal cron per sumber, antrean serial, graceful shutdown (status: Accepted) |
 | `docs/adr/0003-driver-browser-agent-browser-playwright-atau-cdp.md` | ADR: driver browser dipilih lewat `BROWSER_DRIVER` (agent-browser, Playwright, atau CDP Bun) dan metode perbandingannya (status: Proposed) |
+| `docs/adr/0004-ekstraksi-artikel-dengan-hermes-agent.md` | ADR: Hermes Agent (LLM + browser) untuk membaca isi artikel (status: **Rejected**; jangan menambah LLM ke jalur scraper tanpa ADR baru) |
 | `docs/reserch/research.md` | Riset perbandingan tools scraping berita |
 | `docs/adr/0001-penggunaan-agent-browser-di-server.md` | ADR: agent-browser di server (status: Proposed) |
 | `README.md` | Halaman depan repo untuk GitHub; rincian tetap di `scraper/README.md` |
