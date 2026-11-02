@@ -17,7 +17,7 @@ function startMemorySampler(chromePath, intervalMs = 2_000) {
   const peaks = {};
   const shell = Bun.which('pwsh') ?? 'powershell';
   const script = `while ($true) {
-    $p = Get-CimInstance Win32_Process -Filter "Name='chrome.exe' OR Name LIKE 'agent-browser%'" |
+    $p = Get-CimInstance Win32_Process -Filter "Name='chrome.exe' OR Name LIKE 'agent-browser%' OR Name LIKE 'go-scraper%'" |
       Select-Object ProcessId, ParentProcessId, Name, CommandLine, PrivatePageCount
     ConvertTo-Json -Compress -Depth 2 -InputObject @($p)
     Start-Sleep -Milliseconds ${intervalMs}
@@ -49,6 +49,7 @@ function startMemorySampler(chromePath, intervalMs = 2_000) {
         for (const p of procs) {
           let driver;
           if (p.Name.startsWith('agent-browser')) driver = 'agent-browser';
+          else if (p.Name.startsWith('go-scraper')) driver = (p.CommandLine ?? '').includes('trafilatura') ? 'go-trafilatura' : 'go';
           else {
             let root = p;
             while (byPid.get(root.ParentProcessId)?.Name === 'chrome.exe') root = byPid.get(root.ParentProcessId);

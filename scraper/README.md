@@ -164,7 +164,7 @@ CHROME_PATH=<path chrome> bun run bench --sources detik,liputan6 --articles 3
 |---|---|---|
 | `--sources a,b` | semua sumber | Sumber yang diuji; hanya discovery `rss` yang didukung |
 | `--articles N` | `3` | Artikel terbaru per sumber |
-| `--drivers a,b` | `agent-browser,cdp,playwright` | Driver yang dibandingkan; yang pertama menjadi pembanding kesetaraan isi |
+| `--drivers a,b` | `agent-browser,cdp,playwright` | Driver yang dibandingkan; yang pertama menjadi pembanding kesetaraan isi. `go` dan `go-trafilatura` (opsional) menjalankan [`go-scraper`](../go-scraper/README.md) tanpa browser, dengan port `extract-article.js` atau go-trafilatura; binary-nya di-build dulu (ADR-0005) |
 | `--urls <hasil.json>` | - | Pakai ulang URL dari hasil benchmark sebelumnya, bukan RSS terbaru |
 | `--config <path>` | `config.json` | File config |
 | `--out <path>` | `data/bench-<waktu>.json` | Hasil lengkap per pengukuran |

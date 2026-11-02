@@ -2,7 +2,7 @@
 
 Scraper berita: ambil URL, metadata, isi penuh, dan URL gambar lewat **agent-browser** (CLI otomasi Chrome dari Vercel Labs), lalu kirim per artikel ke sistem luar via HTTP POST/PATCH/PUT. Sistem penerima dianggap kotak hitam; kontraknya ada di `scraper/README.md`.
 
-Bahasa komunikasi dan komentar kode: **Bahasa Indonesia**. Gaya komentar mengikuti skill `comment-style`; penulisan dokumen (README, ADR, runbook, `.env.example`) mengikuti skill `tech-writer`.
+Bahasa komunikasi dan komentar kode: **Bahasa Indonesia**. Gaya komentar mengikuti skill `comment-style` (juga untuk Go di `go-scraper/`); penulisan dokumen (README, ADR, runbook, `.env.example`) mengikuti skill `tech-writer`.
 
 ## Isi repo
 
@@ -12,6 +12,8 @@ Bahasa komunikasi dan komentar kode: **Bahasa Indonesia**. Gaya komentar mengiku
 | `docs/adr/0002-scraper-sebagai-server-dengan-jadwal-cron-per-sumber.md` | ADR: mode server, jadwal cron per sumber, antrean serial, graceful shutdown (status: Accepted) |
 | `docs/adr/0003-driver-browser-agent-browser-playwright-atau-cdp.md` | ADR: driver browser dipilih lewat `BROWSER_DRIVER` (agent-browser, Playwright, atau CDP Bun) dan metode perbandingannya (status: Proposed) |
 | `docs/adr/0004-ekstraksi-artikel-dengan-hermes-agent.md` | ADR: Hermes Agent (LLM + browser) untuk membaca isi artikel (status: **Rejected**; jangan menambah LLM ke jalur scraper tanpa ADR baru) |
+| `go-scraper/` | Pembanding lintas bahasa untuk benchmark saja: port Go dari aturan scraper Bun (clean architecture), HTTP tanpa browser; ekstraktor `rules` (port `extract-article.js`) atau `trafilatura`. Ikut alat benchmark sebagai driver `go` dan `go-trafilatura`. Baca `go-scraper/README.md` |
+| `docs/adr/0005-komparasi-scraper-go-tanpa-browser.md` | ADR: perbandingan scraper Bun + browser dengan sistem Go tanpa browser (status: Proposed) |
 | `docs/reserch/research.md` | Riset perbandingan tools scraping berita |
 | `docs/adr/0001-penggunaan-agent-browser-di-server.md` | ADR: agent-browser di server (status: Proposed) |
 | `README.md` | Halaman depan repo untuk GitHub; rincian tetap di `scraper/README.md` |
@@ -30,7 +32,9 @@ bun run bench:accuracy  # akurasi ekstraksi vs HTML asli (selector referensi per
 
 Untuk uji cepat, salin `config.json` ke scratchpad, set `maxArticles` kecil dan `statePath` ke scratchpad, lalu `bun src/main.js --once --config <path>`. Jangan mengotori `data/sent.json` milik user.
 
-Runtime: **semua kode wajib memakai Bun.** Jangan menambah import `node:*` atau dependency npm; pakai padanan Bun (`Bun.file`/`Bun.write`, `Bun.spawn`, `Bun.CryptoHasher`, `Bun.fileURLToPath`, Bun Shell `$`, `Bun.sleep`, `Bun.serve`, `WebSocket`, `bun:test`). Pengecualian: `extract-article.js` berjalan di Chrome, jadi memakai API DOM; `playwright-core` (versi di-pin) disetujui sebagai satu-satunya dependency dan hanya boleh di-import oleh `playwright-driver.js` (ADR-0003).
+`go-scraper/` (jalankan dari folder itu): `go test ./...` lalu `go build -o bin/go-scraper.exe ./cmd/go-scraper`; aturan Bun di bawah tidak berlaku di folder ini, tetapi go-scraper tetap tanpa webhook, state, dan cron.
+
+Runtime: **semua kode di `scraper/` wajib memakai Bun.** Jangan menambah import `node:*` atau dependency npm; pakai padanan Bun (`Bun.file`/`Bun.write`, `Bun.spawn`, `Bun.CryptoHasher`, `Bun.fileURLToPath`, Bun Shell `$`, `Bun.sleep`, `Bun.serve`, `WebSocket`, `bun:test`). Pengecualian: `extract-article.js` berjalan di Chrome, jadi memakai API DOM; `playwright-core` (versi di-pin) disetujui sebagai satu-satunya dependency dan hanya boleh di-import oleh `playwright-driver.js` (ADR-0003).
 
 ## Arsitektur (clean architecture), wajib dijaga
 
@@ -69,4 +73,4 @@ Runtime: **semua kode wajib memakai Bun.** Jangan menambah import `node:*` atau 
 
 ## Masalah kualitas data yang diketahui (belum dikerjakan)
 
-Paragraf promosi dan `authors` berisi nama penerbit di Kompas (belum diukur ulang setelah perubahan ekstraktor), gambar tidak terkait dari blok rekomendasi, `section` kosong. Wadah isi dipilih lewat daftar selector + skor kepadatan paragraf, dengan filter elemen dan baris bukan berita (`extract-article.js`); jangan menambah selector khusus satu situs jika skor sudah menanganinya. **Setelah mengubah `extract-article.js`, ukur ulang** dengan `bun run bench:accuracy --urls <hasil sebelumnya>` agar artikelnya sama (hasil 2 November 2026: `docs/reserch/benchmark-akurasi-ekstraksi-2026-11-02.md`).
+Paragraf promosi dan `authors` berisi nama penerbit di Kompas (belum diukur ulang setelah perubahan ekstraktor), gambar tidak terkait dari blok rekomendasi, `section` kosong. Wadah isi dipilih lewat daftar selector + skor kepadatan paragraf, dengan filter elemen dan baris bukan berita (`extract-article.js`); jangan menambah selector khusus satu situs jika skor sudah menanganinya. **Aturan di `extract-article.js` dan `scrape-article.js` punya port Go di `go-scraper/internal/infrastructure/extract/rules` dan `go-scraper/internal/application`; ubah keduanya bersamaan. Setelah mengubah `extract-article.js`, ukur ulang** dengan `bun run bench:accuracy --urls <hasil sebelumnya>` agar artikelnya sama (hasil 2 November 2026: `docs/reserch/benchmark-akurasi-ekstraksi-2026-11-02.md`).

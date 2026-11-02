@@ -4,8 +4,15 @@ import { AgentBrowserCli } from '../src/infrastructure/browser/agent-browser-cli
 import { BrowserPageReader } from '../src/infrastructure/browser/browser-page-reader.js';
 import { CdpDriver } from '../src/infrastructure/browser/cdp-driver.js';
 import { SourceUrlDiscoverer } from '../src/infrastructure/discovery/source-url-discoverer.js';
+import { GoScraperProcess } from './go-scraper-client.js';
 
 export const ALL_DRIVERS = ['agent-browser', 'cdp', 'playwright'];
+// Driver Go (go-scraper, HTTP tanpa browser) hanya ikut jika diminta lewat `--drivers` (ADR-0005):
+// `go` memakai port extract-article.js, `go-trafilatura` memakai go-trafilatura seperti sistem produksi.
+const GO_DRIVERS = {
+  go: ['-extractor', 'rules'],
+  'go-trafilatura': ['-extractor', 'trafilatura', '-extract-time'],
+};
 const silentLogger = { info() {}, warn() {}, error() {} };
 
 export const hash = (text) => new Bun.CryptoHasher('sha256').update(text ?? '').digest('hex').slice(0, 16);
@@ -36,7 +43,7 @@ export function parseBenchArgs(argv, { outPrefix }) {
     else if (key === '--out') opts.out = value;
     else throw new Error(`unknown argument: ${key}`);
   }
-  const unknown = opts.drivers.filter((d) => !ALL_DRIVERS.includes(d));
+  const unknown = opts.drivers.filter((d) => !ALL_DRIVERS.includes(d) && !GO_DRIVERS[d]);
   if (unknown.length) throw new Error(`unknown driver: ${unknown.join(', ')}`);
   return opts;
 }
@@ -89,6 +96,11 @@ export async function buildPlan(config, names, articles, urlsFile = null) {
 export async function runAcrossDrivers(plan, driverNames, config, { beforeUrl = async () => {}, onResult }) {
   const drivers = {};
   for (const name of driverNames) {
+    if (GO_DRIVERS[name]) {
+      const go = await GoScraperProcess.start({ userAgent: config.userAgent, timeoutMs: 15_000, args: GO_DRIVERS[name] });
+      drivers[name] = { driver: go, scrape: go, warm: false };
+      continue;
+    }
     const driver = await createDriver(name, config);
     drivers[name] = { driver, scrape: new ScrapeArticle({ pageReader: await BrowserPageReader.create(driver), logger: silentLogger }), warm: false };
   }
