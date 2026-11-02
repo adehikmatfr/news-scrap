@@ -97,7 +97,8 @@
     /^(pewarta|editor|reporter|penulis|fotografer|redaktur|sumber)\s*:/i,
     /^(copyright|hak cipta|©)/i,
     /^dilarang (keras )?mengambil konten/i,
-    /^halaman\s*:?\s*\d/i,
+    /^halaman\s*:?(\s*\d|\s*$)/i, // `Halaman: 2` atau label `Halaman:` yang tersisa tanpa link
+    /^(follow|ikuti)( kami)?$/i, // label ajakan follow yang tersisa tanpa nama kanal
     /^\[gambas:[^\]]*\]$/i,
     /^\(?[a-z]{2,5}(\/[a-z]{2,5})*\)?$/i, // inisial editor, mis. `(ahm)`
     /^\([\p{L} .'/-]{2,60}\)$/u, // kredit redaksi dalam kurung, mis. `(Erha Aprili Ramadhoni)`
@@ -133,12 +134,58 @@
     flush();
     return out;
   };
+  // --- Pembersihan teks (11 aturan dari data sistem produksi Go, ADR-0005) ---
+  // Spasi ditulis eksplisit `[ \t\n ]`, bukan `\s`, supaya port Go (RE2) berperilaku sama persis.
+  const CLEAN = {
+    editorCodeEnd: /[ \t\n ]*\([a-z]{2,5}(\/[a-z]{2,5})+\)[ \t\n ]*$/, // 1. `(lil/sfr)` di ujung paragraf
+    gambas: /\[gambas:[^\]]*\]/gi, // 2
+    spaceBeforePunct: /([^ \t\n ])[ \t ]+([.,;:!?])([ \t\n ]|$)/g, // 3. `kata .` -> `kata.`
+    dateline: /^[\p{L} .'-]{2,40},[  ](CNN|CNBC) Indonesia[ \t ]*-{1,2}[ \t ]*/u, // 4. hanya di awal teks
+    parenOpen: /\([ \t\n ]+/g, // 5. `( x )` -> `(x)`
+    parenClose: /[ \t\n ]+\)/g,
+    disclaimer: /disclaimer[ \t ]+the information and publications/i, // 6 (dan 9, yang ada sebelum blok ini)
+    readAlsoStart: /^(baca|lihat)[ \t ]+juga\b/i, // 7. paragraf "Baca juga ..."
+    readAlsoInline: /[ \t ]+(baca|lihat)[ \t ]+juga[ \t ]*:.*$/i, // 7. penanda + judul menempel sampai akhir paragraf
+    tail: [/^learn something new in under a minute\b/i, /^magazine:[ \t ]/i], // 8, 10: hanya di ujung teks
+    photoLine: /^\(?foto[ \t ]*:[^\n]{0,100}$/i, // 11. paragraf kredit foto pendek
+    photoParen: /\(foto[ \t ]*:[^)]*\)/gi, // 11. `(Foto: ...)` di dalam kalimat
+    doubleSpace: /[ \t]{2,}/g,
+  };
+  const cleanParagraphs = (paras) => {
+    let out = [];
+    for (const p of paras) {
+      if (CLEAN.readAlsoStart.test(p) || CLEAN.photoLine.test(p)) continue;
+      const t = p
+        .replace(CLEAN.gambas, ' ')
+        .replace(CLEAN.photoParen, ' ')
+        .replace(CLEAN.readAlsoInline, '')
+        .replace(CLEAN.parenOpen, '(')
+        .replace(CLEAN.parenClose, ')')
+        .replace(CLEAN.spaceBeforePunct, '$1$2$3')
+        .replace(CLEAN.doubleSpace, ' ')
+        .replace(CLEAN.editorCodeEnd, '')
+        .trim();
+      if (t) out.push(t);
+    }
+    if (out.length) {
+      const first = out[0].replace(CLEAN.dateline, '').trim();
+      out = first ? [first, ...out.slice(1)] : out.slice(1);
+    }
+    const cut = out.findIndex((t) => CLEAN.disclaimer.test(t));
+    if (cut >= 0) {
+      const head = out[cut].slice(0, out[cut].search(CLEAN.disclaimer)).trim();
+      out = head ? [...out.slice(0, cut), head] : out.slice(0, cut);
+    }
+    while (out.length && CLEAN.tail.some((re) => re.test(out[out.length - 1]))) out.pop();
+    return out;
+  };
+
   let paragraphs = [];
   if (body) {
     const fromP = [...body.querySelectorAll('p')].filter((p) => !insideNoise(p, body)).map((p) => p.innerText.trim()).filter(Boolean);
     const lines = collectLines(body);
     const pChars = fromP.join('').length;
-    paragraphs = (pChars >= lines.join('').length * 0.6 ? fromP : lines).filter((t) => !isNoiseLine(t));
+    paragraphs = cleanParagraphs((pChars >= lines.join('').length * 0.6 ? fromP : lines).filter((t) => !isNoiseLine(t)));
   }
 
   // --- Gambar (dukung lazy-load) ---

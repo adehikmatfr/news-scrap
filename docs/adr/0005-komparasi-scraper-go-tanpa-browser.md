@@ -9,22 +9,16 @@
 
 Sistem yang sudah berjalan di produksi berbasis Go dan **tidak memakai browser**:
 
-| Bagian | Library |
+| Bagian | Isi |
 |---|---|
 | Baca RSS/Atom | `mmcdole/gofeed` v1.4.2 |
-| Ekstrak isi artikel | `markusmobius/go-trafilatura` v1.12.2, port Go dari trafilatura (Python), dengan go-readability, go-domdistiller, go-htmldate, go-dateparser |
+| Ekstrak isi artikel | `markusmobius/go-trafilatura` v1.12.2 |
 | Fetch HTTP | Ditulis sendiri di atas `net/http` |
+| Metadata, gambar, sampah | Ditangani sendiri: tanggal dari RSS, pembersih tag dan teks sampah. Kodenya tidak ada di repo ini |
 
-Scraper di repo ini (Bun) membuka setiap artikel dengan Chrome headless, lalu menjalankan ekstraktor deterministik `extract-article.js` di halaman. Pertanyaan yang dijawab ADR ini ada dua:
+Scraper di repo ini (Bun) membuka setiap artikel dengan Chrome headless lalu menjalankan ekstraktor deterministik `extract-article.js` di halaman. Pertanyaannya: **dengan aturan ekstraksi yang sama, apa beda pendekatan browser dan pendekatan Go tanpa browser?**
 
-1. Berapa selisih akurasi dan biaya antara kedua sistem?
-2. Apakah selisih itu berasal dari browser atau dari aturan ekstraksi?
-
-## 2. Masalah
-
-Membandingkan sistem Go (go-trafilatura) langsung dengan scraper Bun mencampur dua variabel: ada atau tidaknya browser, dan aturan ekstraksi yang berbeda. Untuk memisahkannya, aturan scraper Bun di-port ke Go **tanpa browser**, lalu ketiganya diukur dengan alat, URL, dan referensi yang sama.
-
-## 3. Pembanding yang dibuat: `go-scraper/`
+## 2. Pembanding yang dibuat: `go-scraper/`
 
 `go-scraper/` (Go 1.26.4) memakai clean architecture yang sama dengan `scraper/`:
 
@@ -34,16 +28,24 @@ Membandingkan sistem Go (go-trafilatura) langsung dengan scraper Bun mencampur d
 | `internal/application` | Port `PageReader`, usecase `ScrapeArticle` | `src/application/scrape-article.js`, `ports.js` |
 | `internal/infrastructure/pagereader` | `PageReader` lewat HTTP: fetch → parse HTML → `Extractor` | `BrowserPageReader` |
 | `internal/infrastructure/extract/rules` | Port 1:1 `extract-article.js` di atas `x/net/html` + `cascadia` | `scripts/extract-article.js` |
-| `internal/infrastructure/extract/trafilatura` | Adapter go-trafilatura, seperti sistem produksi | - |
+| `internal/infrastructure/extract/clean` | Pembersih teks 11 aturan dari data sistem produksi | Bagian "Pembersihan teks" `extract-article.js` |
+| `internal/infrastructure/extract/trafilatura` | go-trafilatura memilih wadah isi; teks, metadata, gambar, dan pembersihan dengan aturan `rules` | - |
 | `cmd/go-scraper` | Composition root | `src/main.js` |
 
 `domain` tidak mengimpor paket internal lain, dan `application` hanya mengimpor `domain`; keduanya sudah dicek dengan `go list`.
 
-go-scraper ikut alat benchmark sebagai driver `go` (ekstraktor `rules`) dan `go-trafilatura` (ekstraktor `trafilatura` dengan `-extract-time`). Proses Go native tetap hidup; alat benchmark (Bun) hanya mengirim URL lewat stdin dan menilai JSON `article` yang dikembalikan.
+**Cara kerja adapter `trafilatura`:**
+1. Metadata, gambar, dan pagination dibaca dengan aturan `rules`.
+2. Elemen sampah dibuang dengan filter elemen `rules`, lalu go-trafilatura dijalankan.
+3. go-trafilatura menulis ulang DOM (link dibuang, `<strong>` dipecah), jadi teks hasilnya hanya dipakai sebagai petunjuk. Yang dicari adalah elemen terkecil di DOM asli yang memuat ≥90% kata hasil itu, tanpa `<h1>`. Elemen dari daftar selector `rules` diutamakan jika memuat ≥80%.
+4. Teks elemen itu dibaca dengan cara `rules`, termasuk pembersihnya.
+
+go-scraper ikut alat benchmark sebagai driver `go` dan `go-trafilatura`. Proses Go native tetap hidup; alat benchmark (Bun) hanya mengirim URL lewat stdin dan menilai JSON `article` yang dikembalikan.
 
 **Yang disamakan:**
 - robots.txt tidak diperiksa (sumber dipilih manual di `config.json`);
 - aturan pagination, `maxPages`, dan `preferAllPage` per sumber;
+- aturan ekstraksi dan pembersih teks;
 - User-Agent, jeda antar-URL, dan daftar URL.
 
 **Yang tidak bisa disamakan tanpa browser:**
@@ -52,116 +54,108 @@ go-scraper ikut alat benchmark sebagai driver `go` (ekstraktor `rules`) dan `go-
 
 ### Temuan tentang dependency go-trafilatura
 
-- **go-re2 dan wazero tidak ikut ter-link pada build default.** go-dateparser v1.2.3 hanya memakai `wasilibs/go-re2` jika build memakai tag `re2_wasm` atau `re2_cgo` **dan** CGO aktif (`internal/regexp/regexp-re2.go:1`); selain itu memakai `regexp` standar Go.
-- Keduanya tercatat di `go.mod`, tetapi tidak muncul di `go list -deps ./cmd/go-scraper` maupun `go version -m` binary.
+- go-dateparser v1.2.3 hanya memakai `wasilibs/go-re2` (dan wazero) jika build memakai tag `re2_wasm` atau `re2_cgo` **dan** CGO aktif (`internal/regexp/regexp-re2.go:1`). Pada build default, keduanya tercatat di `go.mod` tetapi tidak ter-link.
 - `CGO_ENABLED=0 go build` berhasil.
+
+## 3. Pembersih teks: 11 aturan dari data sistem produksi
+
+Tim produksi mendata 11 pola sampah. Aturannya dipasang di tiga tempat:
+- bagian "Pembersihan teks" `extract-article.js`;
+- port Go-nya, `extract/clean`, yang dipakai `rules` dan `trafilatura`;
+- referensi benchmark, sehingga pola itu dihitung sebagai sampah.
+
+Polanya:
+1. kode redaksi `(lil/sfr)`;
+2. `[Gambas:…]`;
+3. spasi sebelum tanda baca;
+4. dateline `<Kota>, CNN/CNBC Indonesia -`;
+5. spasi di dalam kurung;
+6. disclaimer TradingView;
+7. "Baca juga" / "Lihat Juga" + judul;
+8. promo Investinglive;
+9. promo Telegram;
+10. `Magazine:`;
+11. kredit `Foto:`.
+
+Empat belas contoh uji menghasilkan keluaran yang sama di JS dan Go. Pada 60 artikel RSS terbaru (cnnindonesia, detik, cnbcindonesia), pola 1, 2, 3, 4, 5, 7, dan 11 tersisa 0 di Go (rules) dan Go (trafilatura). Pola 6, 8, 9, dan 10 diuji dengan contoh saja, karena sumbernya tidak ada di `config.json`.
 
 ## 4. Hasil
 
 Diukur 2 November 2026 di Windows 11 (laptop pengembangan) dengan Chrome 156. Sampelnya 24 artikel dari 8 sumber; URL-nya sama dengan pengukuran akurasi sebelumnya.
 
-### 4.1 Akurasi (24/24 artikel berhasil dibaca ketiga implementasi)
+### 4.1 Akurasi (24/24 artikel berhasil dibaca semua implementasi)
 
 | | Bun + browser (CDP) | Go (rules) | Go (trafilatura) |
 |---|---|---|---|
-| Recall | 100% | 100% | 99,1% |
-| Precision | 99,9% | 99,9% | 88,9% |
-| Paragraf bukan berita | 0 | 0 | 135 |
-| Judul cocok | 24/24 | 24/24 | 21/24 |
-| Tanggal terbit cocok (WIB, sampai menit) | 18/18 | 18/18 | 12/18 (0/18 tanpa `-extract-time`) |
-| Penulis cocok | 12/12 | 12/12 | 12/12 |
-| Gambar di dalam isi | 28/31 | 28/31 | 2/31 |
+| Recall / precision | 100% / 100% | 100% / 100% | 100% / 100% |
+| Paragraf hilang / bukan berita | 0 / 0 | 0 / 0 | 0 / 0 |
+| Judul / tanggal terbit / penulis | 24/24, 18/18, 12/12 | sama | sama |
+| Gambar di dalam isi | 28/31 | 28/31 | 28/31 |
 
-- **Go (rules) identik dengan CDP di setiap artikel** pada semua ukuran di atas.
-- **agent-browser dan Playwright** menghasilkan isi identik dengan CDP di 22/22 artikel pada putaran performa.
+- **Isi dan judul** dari agent-browser, Playwright, Go (rules), dan Go (trafilatura) identik dengan CDP Bun di setiap artikel yang berhasil dibuka keduanya pada putaran performa.
+- **Teks Go (rules) dan Go (trafilatura) identik** di 24/24 artikel: jumlah kata, jumlah paragraf, dan isi tiap paragraf.
+- **Efek tanpa browser:** teks isi identik persis 24/24, dan daftar gambar berbeda di 4 artikel.
+  - cnnindonesia: browser mengambil 9 gambar dari artikel lain lewat blok rekomendasi yang dimuat JavaScript.
+  - liputan6 (2 artikel) dan detik: Go mengambil thumbnail berita terkait atau placeholder lazy-load `loading.gif`.
+- **Satu artikel tambahan** dari 60 artikel pola sampah (cnnindonesia, daftar idol K-pop, tanpa `#article-content-body`) kosong di Bun + browser dan Go (rules), tetapi terbaca di Go (trafilatura).
 
-**Efek tanpa browser** (CDP Bun dan Go dijalankan berurutan pada ke-24 artikel, lalu dibandingkan per artikel):
-
-- **Teks isi identik persis 24/24.** Ini tercapai setelah `dom.InnerText` mempertahankan `&nbsp;` seperti `innerText` di browser; CSS hanya merapikan spasi, tab, dan baris baru.
-- **Daftar gambar berbeda di 3/24 artikel:**
-  - liputan6: Go mengambil 5 thumbnail berita terkait (200×113) yang tidak ada di browser;
-  - detik: Go mengambil placeholder lazy-load `loading.gif`;
-  - antaranews: host CDN gambar utama beda (`img.` di HTML server, `cdn.` di browser).
-
-  Dua yang pertama diduga hasil JavaScript lazy-load di browser; belum diperiksa lebih jauh.
-- **Satu temuan tidak terulang.** Di putaran benchmark, browser menemukan 11 gambar di satu artikel cnnindonesia dan Go 2. Saat diulang, browser juga 2, jadi penyebabnya tidak bisa dipastikan.
-
-Per sumber, Go (trafilatura), recall / precision dalam persen:
-
-| Sumber | Recall / precision | Paragraf bukan berita yang ikut |
-|---|---|---|
-| antaranews | 100 / 80 | Footer redaksi (`Pewarta:`/`Editor:`), larangan AI, "Baca juga", embed tweet |
-| cnnindonesia | 100 / 96 | `ADVERTISEMENT`, `SCROLL TO CONTINUE WITH CONTENT`, dateline |
-| detik | 100 / 96 | `SCROLL TO CONTINUE WITH CONTENT`, inisial redaksi, dateline |
-| liputan6 | 100 / 96 | `Advertisement`, ajakan promosi kanal |
-| sindonews (2–3 halaman) | 93 / 64 | Tanggal, "loading...", tombol ukuran huruf, berulang di setiap halaman |
-| cnbcindonesia | 100 / 97 | Inisial redaksi, placeholder video |
-| okezone (2–4 halaman) | 100 / 98 | Kredit redaksi dalam kurung |
-| viva (2–3 halaman) | 100 / 84 | Kredit foto, judul berita terkait |
-
-Penyebab kekalahan go-trafilatura yang sudah diperiksa:
-
-- **Precision:** aturan generik; label iklan, footer redaksi, dan kredit yang dibuang `extract-article.js` ikut terambil.
-- **Tanggal:** default go-trafilatura hanya mengambil tanggal (`2026-11-02T00:00:00Z`). Dengan `ExtractTime`, jam WIB di cnnindonesia dan detik diberi zona `Z` (UTC), sehingga meleset 7 jam. Port aturan Bun mengambil `datePublished` JSON-LD atau `article:published_time` apa adanya.
-- **Gambar:** go-trafilatura hanya mengenali `src` dan `data-src*` berekstensi gambar (`main-extractor.go:474`), sehingga `data-original` (viva) hilang.
-- **Judul:** okezone diambil dari `<title>` beserta akhiran ` : Okezone Sports`; aturan Bun mengutamakan JSON-LD `headline`.
-
-### 4.2 Performa (16 artikel yang berhasil dibuka kelima implementasi, tanpa pembukaan pertama)
+### 4.2 Performa (21 artikel yang berhasil dibuka kelima implementasi, tanpa pembukaan pertama)
 
 | Implementasi | Median / artikel | p95 | Cold start | Peak memory | Berhasil |
 |---|---|---|---|---|---|
-| agent-browser | 25,8 dtk | 53,7 dtk | 29,9 dtk | 1,9 GB (Chrome) | 22/24 |
-| CDP Bun | 3,4 dtk | 24,7 dtk | 12,7 dtk | 1,9 GB (Chrome) | 23/24 |
-| Playwright | 3,8 dtk | 17,4 dtk | 5,1 dtk | 1,8 GB (Chrome) | 23/24 |
-| Go (rules) | 3,1 dtk | 11,5 dtk | 3,2 dtk | 101 MB (proses Go) | 21/24 |
-| Go (trafilatura) | 1,9 dtk | 9,7 dtk | 2,0 dtk | 119 MB (proses Go) | 22/24 |
+| agent-browser | 26,2 dtk | 54,4 dtk | 20,2 dtk | 1,8 GB (Chrome) | 22/24 |
+| CDP Bun | 6,6 dtk | 22,8 dtk | 1,9 dtk | 2,0 GB (Chrome) | 23/24 |
+| Playwright | 6,2 dtk | 32,3 dtk | 14,7 dtk | 1,6 GB (Chrome) | 24/24 |
+| Go (rules) | 4,7 dtk | 13,2 dtk | 1,6 dtk | 97 MB (proses Go) | 24/24 |
+| Go (trafilatura) | 2,7 dtk | 8,7 dtk | 1,0 dtk | 117 MB (proses Go) | 24/24 |
 
-Median rasio waktu per artikel terhadap Go (rules), pada URL yang sama:
-- agent-browser 8,7×
-- CDP Bun 3,0×
-- Playwright 1,1×
-- Go (trafilatura) 0,85×
+**Waktu ekstraksi tanpa jaringan.** HTML ke-24 artikel diunduh sekali, lalu setiap ekstraktor dijalankan 5 kali per halaman, dalam dua putaran:
+- Go (rules): median 7,7–8,0 ms per halaman;
+- Go (trafilatura): median 15,1–15,7 ms per halaman, ±2× lebih lama.
 
 Batasan pengukuran:
 
-- **Jaringan tidak stabil.** Semua implementasi mengalami timeout (okezone, detik, liputan6, cnbcindonesia).
-  - Kegagalan Go berupa `context deadline exceeded` dan `TLS handshake timeout`.
-  - Saat jaringan normal, median CDP Bun 0,6 dtk dan Playwright 0,3 dtk ([benchmark driver](../reserch/benchmark-driver-browser-2026-11-02.md)).
-  - Angka absolut berubah antar putaran. Yang konsisten: agent-browser paling lambat, dan Go lebih cepat dari driver browser. Urutan CDP Bun dan Playwright berganti antar putaran.
+- **Waktu per artikel didominasi jaringan.** Selisih Go (rules) vs Go (trafilatura) di tabel berasal dari jaringan dan urutan pengukuran, bukan dari ekstraktornya.
+- **Bias urutan.** Urutan implementasi digilir per URL, tetapi di 4 dari 5 rotasi Go (trafilatura) berjalan tepat setelah Go (rules), dan Playwright tepat setelah CDP Bun, sehingga mendapat cache CDN yang baru dipanaskan. Rotasi alat benchmark perlu diperbaiki, misalnya dengan urutan acak per URL, sebelum angka waktu dipakai untuk memilih antara implementasi yang berdekatan.
+- **Jaringan tidak stabil.** Saat jaringan normal, median CDP Bun 0,6 dtk dan Playwright 0,3 dtk ([benchmark driver](../reserch/benchmark-driver-browser-2026-11-02.md)). Yang konsisten di setiap putaran: agent-browser paling lambat; Go lebih cepat dan jauh lebih hemat memori dari driver browser.
 - **Cakupan memori tidak sama.** Untuk Go diukur seluruh prosesnya; untuk browser hanya pohon proses Chrome, tanpa proses Bun.
-- Go (rules) sedikit lebih lambat dari Go (trafilatura) pada median. Penyebabnya belum diprofilkan; dugaannya adalah skor kepadatan yang menghitung ulang teks per elemen.
 
 ## 5. Opsi
 
 | Opsi | Akurasi | Biaya | Catatan |
 |---|---|---|---|
-| A. Scraper Bun + browser | Tertinggi | Chrome ±1,9 GB; agent-browser lambat | Membaca isi yang dirender JavaScript |
-| B. Sistem Go dengan go-trafilatura (sekarang) | Precision 88,9%, tanggal dan gambar bermasalah | ±0,1 GB, tercepat | Tanpa browser |
-| C. Sistem Go dengan port aturan Bun (`extract/rules`) | Sama dengan A pada 8 sumber | ±0,1 GB, setara Playwright | Tanpa browser; aturan dirawat di dua bahasa |
-| D. C, ditambah jalur browser untuk sumber yang dirender JavaScript | Sama dengan A | Chrome hanya untuk sumber tertentu | Butuh penanda per sumber |
+| A. Scraper Bun + browser | 100% / 100% | Chrome ±1,6–2,0 GB; agent-browser lambat | Membaca isi yang dirender JavaScript |
+| B. Go + go-trafilatura dengan aturan yang sama | 100% / 100% | ±0,1 GB; ekstraksi ±15 ms per halaman | Dependency go-trafilatura; lebih tahan terhadap struktur halaman yang belum dikenal (1 artikel) |
+| C. Go dengan port aturan Bun (`extract/rules`) | 100% / 100% | ±0,1 GB; ekstraksi ±8 ms per halaman | Aturan dirawat di dua bahasa |
+| D. B atau C, ditambah jalur browser untuk sumber yang dirender JavaScript | Sama dengan A | Chrome hanya untuk sumber tertentu | Butuh penanda per sumber |
 
 ## 6. Keputusan (diusulkan)
 
-1. **Selisih akurasi antara sistem Go dan scraper Bun berasal dari aturan ekstraksi, bukan dari browser.** Port aturan Bun ke Go tanpa browser identik dengan scraper Bun + Chrome di 24/24 artikel.
-2. **Sistem produksi Go diusulkan memakai opsi C**: ganti go-trafilatura dengan port aturan Bun (`go-scraper/internal/infrastructure/extract/rules`), dengan pagination dan `ScrapeArticle` yang sama.
+1. **Untuk 8 sumber ini, browser tidak dibutuhkan.** Dengan aturan ekstraksi yang sama, Go tanpa browser memberi teks identik dengan Bun + Chrome di 24/24 artikel, dengan memori ±0,1 GB dibanding ±1,6–2,0 GB.
+2. **Pendekatan sistem produksi Go (opsi B) dan port aturan Bun (opsi C) setara akurasinya.** Pilihannya didasarkan pada:
+   - biaya pemrosesan (±15 vs ±8 ms per halaman, keduanya kecil dibanding jaringan);
+   - perawatan;
+   - ketahanan terhadap struktur halaman yang belum dikenal.
 3. **Opsi D disiapkan jika ada sumber yang isinya hanya muncul lewat JavaScript.** Untuk jalur browser dipakai Playwright atau CDP Bun, bukan agent-browser (ADR-0003).
 
 ## 7. Konsekuensi
 
-- Aturan ekstraksi dirawat di dua bahasa. Perubahan `extract-article.js` atau `scrape-article.js` harus diterapkan juga di `go-scraper`, lalu diukur dengan `bun run bench:accuracy --drivers cdp,go --urls <hasil sebelumnya>`. Hasil Go yang berbeda dari CDP menandakan port yang tertinggal.
-- `go-scraper/` di repo ini hanya untuk benchmark: tanpa webhook, state, dan cron. Pemindahan ke sistem produksi adalah pekerjaan terpisah.
+- **Aturan dirawat di beberapa tempat:**
+  - aturan ekstraksi di `extract-article.js` dan `extract/rules`;
+  - pembersih teks di `extract-article.js` dan `extract/clean`, ditambah referensi `tools/compare-with-source.js`, yang membaca bagian itu langsung dari teks `extract-article.js`, di antara `const CLEAN = {` dan `let paragraphs = [];`.
+
+  Setiap perubahan diterapkan di semua tempat, lalu diukur dengan `bun run bench:accuracy --drivers cdp,go,go-trafilatura --urls <hasil sebelumnya>`. Hasil yang berbeda dari CDP menandakan port yang tertinggal.
+- `go-scraper/` di repo ini hanya untuk benchmark: tanpa webhook, state, dan cron.
 - Alat benchmark menerima driver opsional `go` dan `go-trafilatura` (`GO_SCRAPER_BIN`, `GO_SCRAPER_ARGS`).
 - Aturan "semua kode memakai Bun" hanya berlaku untuk `scraper/`.
 
 ## 8. Kapan ditinjau ulang
 
 - Saat sumber baru ditambahkan dan isinya tidak terambil tanpa browser.
-- Setelah port diterapkan di sistem produksi dan diukur di sana.
-- Jika aturan di kedua bahasa mulai sering tidak sinkron. Alternatifnya: jalankan `extract-article.js` dari Go lewat DOM tanpa browser, atau satu sumber aturan.
+- Jika aturan di kedua bahasa mulai sering tidak sinkron. Alternatifnya: satu sumber aturan untuk JS dan Go.
 
 ## 9. Pertanyaan terbuka
 
-- Opsi go-trafilatura yang dipakai sistem produksi (fokus, fallback, `HtmlDateOptions`), dan apakah build-nya memakai tag `re2_wasm`/`re2_cgo`.
-- Pengukuran performa ulang saat jaringan stabil.
-- Penyebab `TLS handshake timeout` Go yang berulang di liputan6 dan okezone, padahal browser berhasil di putaran yang sama.
-- Profil CPU ekstraktor `rules` (lihat 4.2).
+- Pengukuran performa ulang saat jaringan stabil, dengan urutan implementasi acak per URL.
+- Apakah build produksi memakai tag `re2_wasm`/`re2_cgo` (overhead runtime WASM).
+- Perlu tidaknya aturan `rules` ditambah untuk halaman tanpa wadah yang dikenal, seperti artikel daftar K-pop yang hanya terbaca go-trafilatura.

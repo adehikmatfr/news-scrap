@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/adehikmatfr/news-scrap/go-scraper/internal/domain"
+	"github.com/adehikmatfr/news-scrap/go-scraper/internal/infrastructure/extract/clean"
 	"github.com/adehikmatfr/news-scrap/go-scraper/internal/infrastructure/extract/dom"
 	"github.com/adehikmatfr/news-scrap/go-scraper/internal/infrastructure/extract/pagination"
 	"github.com/andybalholm/cascadia"
@@ -48,7 +49,8 @@ var (
 		regexp.MustCompile(`(?i)^(pewarta|editor|reporter|penulis|fotografer|redaktur|sumber)\s*:`),
 		regexp.MustCompile(`(?i)^(copyright|hak cipta|©)`),
 		regexp.MustCompile(`(?i)^dilarang (keras )?mengambil konten`),
-		regexp.MustCompile(`(?i)^halaman\s*:?\s*\d`),
+		regexp.MustCompile(`(?i)^halaman\s*:?(\s*\d|\s*$)`), // `Halaman: 2` atau label `Halaman:` yang tersisa tanpa link
+		regexp.MustCompile(`(?i)^(follow|ikuti)( kami)?$`),  // label ajakan follow yang tersisa tanpa nama kanal
 		regexp.MustCompile(`(?i)^\[gambas:[^\]]*\]$`),
 		regexp.MustCompile(`(?i)^\(?[a-z]{2,5}(/[a-z]{2,5})*\)?$`), // inisial editor, mis. `(ahm)`
 		regexp.MustCompile(`^\([\p{L} .'/-]{2,60}\)$`),             // kredit redaksi dalam kurung
@@ -353,6 +355,40 @@ func isNoiseLine(t string) bool {
 	return false
 }
 
+// Paragraphs dan PruneNoise dipakai ekstraktor lain (adapter trafilatura) agar teks dibaca dan dibersihkan
+// dengan aturan yang sama: per <p> atau per baris, filter baris sampah, lalu pembersih 11 aturan.
+func Paragraphs(root *html.Node) []string { return (&page{}).paragraphs(root) }
+
+// KnownContainers mengembalikan elemen di dalam root yang cocok dengan daftar selector wadah isi, sesuai urutan daftar.
+func KnownContainers(root *html.Node) []*html.Node {
+	var out []*html.Node
+	for _, sel := range bodySelectors {
+		if el := dom.Query(root, sel); el != nil {
+			out = append(out, el)
+		}
+	}
+	return out
+}
+
+// PruneNoise membuang elemen bukan berita (NOISE_TAGS, NOISE_CLASS, `hidden`) dari seluruh dokumen.
+func PruneNoise(doc *html.Node) {
+	var noise []*html.Node
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if dom.IsElement(c) && c.Data != "html" && c.Data != "head" && c.Data != "body" && isNoise(c) {
+				noise = append(noise, c)
+				continue
+			}
+			walk(c)
+		}
+	}
+	walk(doc)
+	for _, n := range noise {
+		n.Parent.RemoveChild(n)
+	}
+}
+
 // Isi diambil per <p> jika <p> memuat sebagian besar teks; jika tidak (isi dipisah <br>), per baris blok.
 func (x *page) paragraphs(body *html.Node) []string {
 	if body == nil {
@@ -372,13 +408,13 @@ func (x *page) paragraphs(body *html.Node) []string {
 	if float64(runeLen(strings.Join(fromP, ""))) >= float64(runeLen(strings.Join(lines, "")))*0.6 {
 		chosen = fromP
 	}
-	out := []string{}
+	kept := []string{}
 	for _, t := range chosen {
 		if !isNoiseLine(t) {
-			out = append(out, t)
+			kept = append(kept, t)
 		}
 	}
-	return out
+	return clean.Paragraphs(kept)
 }
 
 func collectLines(root *html.Node) []string {

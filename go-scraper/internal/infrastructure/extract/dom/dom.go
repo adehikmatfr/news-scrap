@@ -147,6 +147,15 @@ func Collapse(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
+// Clone menyalin node beserta seluruh turunannya, seperti cloneNode(true).
+func Clone(n *html.Node) *html.Node {
+	c := &html.Node{Type: n.Type, DataAtom: n.DataAtom, Data: n.Data, Namespace: n.Namespace, Attr: append([]html.Attribute(nil), n.Attr...)}
+	for child := n.FirstChild; child != nil; child = child.NextSibling {
+		c.AppendChild(Clone(child))
+	}
+	return c
+}
+
 // Body mengembalikan <body>, seperti document.body.
 func Body(doc *html.Node) *html.Node {
 	return Query(doc, cascadia.MustCompile("body"))

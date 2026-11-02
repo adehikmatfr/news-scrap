@@ -1,16 +1,16 @@
-// Package trafilatura: ekstraktor memakai go-trafilatura, seperti sistem produksi berbasis Go (ADR-0005).
-// Pagination dibaca dengan aturan yang sama dengan ekstraktor rules, supaya perbandingan hanya pada isi dan metadata.
+// Package trafilatura: go-trafilatura memilih wadah isi artikel; selebihnya mengikuti ekstraktor rules,
+// seperti sistem produksi Go yang sudah menangani metadata, gambar, dan sampah sendiri (ADR-0005).
+// go-trafilatura menulis ulang DOM (link dibuang, <strong> dipecah), jadi teksnya hanya dipakai untuk menemukan
+// elemen yang sama di DOM asli; teks isi lalu dibaca dari elemen itu dengan cara rules.
 package trafilatura
 
 import (
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/adehikmatfr/news-scrap/go-scraper/internal/domain"
 	"github.com/adehikmatfr/news-scrap/go-scraper/internal/infrastructure/extract/dom"
-	"github.com/adehikmatfr/news-scrap/go-scraper/internal/infrastructure/extract/pagination"
-	"github.com/markusmobius/go-htmldate"
+	"github.com/adehikmatfr/news-scrap/go-scraper/internal/infrastructure/extract/rules"
 	"github.com/markusmobius/go-trafilatura"
 	"golang.org/x/net/html"
 )
@@ -18,132 +18,133 @@ import (
 type Extractor struct {
 	Focus    trafilatura.ExtractionFocus
 	Fallback bool
-	// ExtractTime meminta jam terbit dari go-htmldate; default trafilatura hanya mengambil tanggal (00:00 UTC).
-	ExtractTime bool
 }
 
 // Extract mengembalikan `ContentText` kosong jika trafilatura tidak menemukan isi, sama dengan ekstraktor rules.
 func (e Extractor) Extract(doc *html.Node, here *url.URL) domain.Page {
-	// Dibaca sebelum trafilatura, yang mengubah pohon DOM saat membersihkan halaman.
-	p := domain.Page{Pagination: pagination.Find(doc, here)}
-	p.URL = here.String()
+	// Metadata, gambar, dan pagination dibaca sebelum DOM diubah.
+	p := rules.Extractor{}.Extract(doc, here)
+	p.ContentText, p.WordCount = "", 0
 
-	opts := trafilatura.Options{
+	// Teks dibaca dari salinan sebelum PruneNoise, karena rules tidak membuang elemen inline di dalam <p>.
+	original := dom.Clone(doc)
+	rules.PruneNoise(doc)
+	res, err := trafilatura.ExtractDocument(doc, trafilatura.Options{
 		OriginalURL:     here,
 		EnableFallback:  e.Fallback,
 		Focus:           e.Focus,
 		ExcludeComments: true,
-		IncludeImages:   true,
 		Deduplicate:     true,
-	}
-	if e.ExtractTime {
-		// Sama dengan preset bawaan trafilatura, ditambah ExtractTime.
-		opts.HtmlDateOptions = &htmldate.Options{UseOriginalDate: true, SkipExtensiveSearch: !e.Fallback, ExtractTime: true}
-	}
-	res, err := trafilatura.ExtractDocument(doc, opts)
-	if err != nil {
-		p.Authors, p.Tags, p.Images = []string{}, []string{}, []domain.Image{}
+		HtmlDateMode:    trafilatura.Disabled,
+	})
+	if err != nil || res.ContentNode == nil {
 		return p
 	}
-	paragraphs := blockTexts(res.ContentNode)
-	m := res.Metadata
-	p.Title = m.Title
-	p.Description = m.Description
-	p.Authors = splitAuthors(m.Author)
-	p.Tags = nonNil(m.Tags)
-	p.MainImage = m.Image
-	p.Images = images(res.ContentNode, here)
+	target := wordSet(textWithoutTitle(res.ContentNode))
+	container := matchContainer(original, target)
+	if container == nil {
+		return p
+	}
+	// Seperti rules: wadah dari daftar selector umum dipakai jika memuat sebagian besar isi yang ditemukan.
+	for _, known := range rules.KnownContainers(container) {
+		if coverage(known, target) >= minKnownCoverage {
+			container = known
+			break
+		}
+	}
+	paragraphs := rules.Paragraphs(container)
 	p.ContentText = strings.Join(paragraphs, "\n\n")
 	p.WordCount = domain.CountWords(p.ContentText)
-	if len(m.Categories) > 0 {
-		p.Section = m.Categories[0]
-	}
-	if !m.Date.IsZero() {
-		s := m.Date.Format(time.RFC3339)
-		p.PublishedAt = &s
-	}
 	return p
 }
 
-// trafilatura menggabungkan beberapa penulis dengan "; ".
-func splitAuthors(s string) []string {
-	out := []string{}
-	for _, name := range strings.Split(s, ";") {
-		if name = strings.TrimSpace(name); name != "" {
-			out = append(out, name)
+var containerTags = map[string]bool{"div": true, "article": true, "section": true, "main": true, "td": true, "body": true}
+
+// minCoverage: wadah dianggap memuat isi hasil trafilatura jika memuat sebagian besar katanya;
+// sisanya biasanya judul atau label yang trafilatura ambil dari luar wadah isi.
+// minKnownCoverage lebih longgar untuk wadah dari daftar selector umum, yang sudah dikenal sebagai wadah isi.
+const (
+	minCoverage      = 0.9
+	minKnownCoverage = 0.8
+)
+
+func coverage(n *html.Node, target map[string]bool) float64 {
+	hit := 0
+	for w := range wordSet(dom.TextContent(n)) {
+		if target[w] {
+			hit++
 		}
 	}
-	return out
+	return float64(hit) / float64(len(target))
 }
 
-func nonNil(s []string) []string {
-	if s == nil {
-		return []string{}
+// matchContainer memilih elemen DOM asli terkecil yang memuat ≥ minCoverage kata hasil trafilatura.
+// Jika tidak ada, dipakai elemen dengan F1 kata tertinggi.
+func matchContainer(doc *html.Node, target map[string]bool) *html.Node {
+	if len(target) == 0 {
+		return nil
 	}
-	return s
-}
-
-var blockTags = map[string]bool{
-	"p": true, "h1": true, "h2": true, "h3": true, "h4": true, "h5": true, "h6": true,
-	"li": true, "blockquote": true, "pre": true, "td": true, "th": true, "div": true,
-}
-
-// blockTexts mengambil teks per elemen blok terdalam, supaya paragraf terpisah "\n\n" seperti ekstraktor rules.
-func blockTexts(root *html.Node) []string {
-	var out []string
-	var walk func(n *html.Node) bool
-	// walk mengembalikan true jika n berisi elemen blok, sehingga induknya tidak menghasilkan teks ganda.
-	walk = func(n *html.Node) bool {
-		hasBlock := false
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			if walk(c) {
-				hasBlock = true
-			}
-		}
-		if n.Type != html.ElementNode || !blockTags[n.Data] {
-			return hasBlock
-		}
-		if !hasBlock {
-			if text := dom.Collapse(dom.TextContent(n)); text != "" {
-				out = append(out, text)
-			}
-		}
-		return true
-	}
-	if root != nil {
-		walk(root)
-	}
-	return out
-}
-
-func images(root *html.Node, base *url.URL) []domain.Image {
-	out := []domain.Image{}
-	seen := map[string]bool{}
-	var walk func(n *html.Node)
+	var smallest, bestF1Node *html.Node
+	smallestSize, bestF1 := 0, 0.0
+	var walk func(*html.Node)
 	walk = func(n *html.Node) {
-		if n.Type == html.ElementNode && n.Data == "img" {
-			if src := dom.Attr(n, "src"); src != "" {
-				if u, err := base.Parse(src); err == nil && !seen[u.String()] {
-					seen[u.String()] = true
-					out = append(out, domain.Image{URL: u.String(), Caption: caption(n)})
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if c.Type != html.ElementNode {
+				continue
+			}
+			if containerTags[c.Data] {
+				own := wordSet(dom.TextContent(c))
+				hit := 0
+				for w := range own {
+					if target[w] {
+						hit++
+					}
+				}
+				if hit > 0 {
+					precision, recall := float64(hit)/float64(len(own)), float64(hit)/float64(len(target))
+					if recall >= minCoverage && (smallest == nil || len(own) < smallestSize) {
+						smallest, smallestSize = c, len(own)
+					}
+					if f1 := 2 * precision * recall / (precision + recall); f1 > bestF1 {
+						bestF1Node, bestF1 = c, f1
+					}
 				}
 			}
-		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
 			walk(c)
 		}
 	}
-	if root != nil {
-		walk(root)
+	walk(doc)
+	if smallest != nil {
+		return smallest
 	}
-	return out
+	return bestF1Node
 }
 
-func caption(img *html.Node) *string {
-	for _, key := range []string{"title", "alt"} {
-		if v := strings.TrimSpace(dom.Attr(img, key)); v != "" {
-			return &v
+// textWithoutTitle: teks hasil trafilatura tanpa <h1>. Judul sering ada di luar wadah isi, dan di halaman lanjutan
+// yang pendek kata-katanya cukup banyak untuk membuat wadah yang lebih lebar terpilih.
+func textWithoutTitle(root *html.Node) string {
+	var b strings.Builder
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			switch {
+			case c.Type == html.TextNode:
+				b.WriteString(c.Data)
+				b.WriteByte(' ')
+			case c.Type == html.ElementNode && c.Data == "h1":
+			default:
+				walk(c)
+			}
 		}
 	}
-	return nil
+	walk(root)
+	return b.String()
+}
+
+func wordSet(text string) map[string]bool {
+	set := map[string]bool{}
+	for _, w := range strings.Fields(strings.ToLower(text)) {
+		set[w] = true
+	}
+	return set
 }

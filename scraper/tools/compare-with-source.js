@@ -48,6 +48,13 @@ function exclusionOf(el, extra) {
 const NOISE_LINE =
   /^(baca juga|baca:|simak juga|lihat juga|saksikan juga|scroll to continue|advertisement|ikuti (berita|kami)|dapatkan (berita|update)|dilarang (keras )?mengambil konten|\[gambas:[^\]]*\]$|\([\p{L} .'/-]{2,60}\)$)|\bmenyajikan (informasi|berita) terbaru\b/iu;
 
+// 11 aturan pembersih dari data sistem produksi (dateline, kode redaksi, `[Gambas:…]`, dll.) adalah definisi sampah
+// yang disepakati, jadi referensi memakai bagian "Pembersihan teks" yang sama dengan extract-article.js.
+const EXTRACTOR_SOURCE = await Bun.file(new URL('../src/infrastructure/browser/scripts/extract-article.js', import.meta.url)).text();
+const cleanParagraphs = new Function(
+  `${EXTRACTOR_SOURCE.slice(EXTRACTOR_SOURCE.indexOf('const CLEAN = {'), EXTRACTOR_SOURCE.indexOf('  let paragraphs = [];'))}; return cleanParagraphs;`,
+)();
+
 const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', mdash: '—', ndash: '–', hellip: '…', rsquo: '’', lsquo: '‘', rdquo: '”', ldquo: '“' };
 const decode = (s) =>
   s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) => {
@@ -137,7 +144,7 @@ async function readReference(html, spec, pageUrl) {
   for (const k of Object.keys(texts)) texts[k] = texts[k] === null ? null : clean(texts[k]);
   return {
     ...texts,
-    paragraphs: state.paragraphs.filter((p) => !NOISE_LINE.test(p)),
+    paragraphs: cleanParagraphs(state.paragraphs.filter((p) => !NOISE_LINE.test(p))),
     images: [...new Set(state.images)],
     nextPages: articlePages(links, pageUrl),
   };

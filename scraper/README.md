@@ -179,7 +179,7 @@ CHROME_PATH=<path chrome> bun run bench:accuracy --sources detik,liputan6 --arti
 
 `tools/compare-with-source.js` menerima argumen yang sama (`--sources`, `--articles`, `--drivers`, `--config`, `--urls`, `--out`, default `data/accuracy-<waktu>.json`). `--urls <hasil.json>` memakai ulang URL dari hasil sebelumnya (kedua alat), supaya perubahan ekstraktor diukur pada artikel yang sama. Untuk setiap URL, alat ini mengambil HTML asli lewat `fetch` biasa dan mengurainya dengan `HTMLRewriter` memakai selector per situs di tabel `REFERENCE` (wadah isi, judul, penulis, tanggal yang terlihat; halaman lanjutan ikut dibaca). Hasil ekstraksi tiap driver lalu dinilai: recall dan presisi kata isi berita, paragraf hilang dan paragraf bukan berita, judul, tanggal (WIB, sampai menit), penulis, dan gambar di dalam isi.
 
-Sumber tanpa entri `REFERENCE` dilewati. Jika situs mengubah tampilan, artikelnya ditandai `reference: no paragraphs` dan selector di `REFERENCE` perlu diperbarui. Hasil 2 November 2026: [`docs/reserch/benchmark-akurasi-ekstraksi-2026-11-02.md`](../docs/reserch/benchmark-akurasi-ekstraksi-2026-11-02.md).
+Teks referensi juga dibersihkan dengan bagian "Pembersihan teks" di `extract-article.js` (11 aturan dari data sistem produksi: dateline, kode redaksi, `[Gambas:…]`, dan lainnya), sehingga pola itu dihitung sebagai sampah. Sumber tanpa entri `REFERENCE` dilewati. Jika situs mengubah tampilan, artikelnya ditandai `reference: no paragraphs` dan selector di `REFERENCE` perlu diperbarui. Hasil 2 November 2026: [`docs/reserch/benchmark-akurasi-ekstraksi-2026-11-02.md`](../docs/reserch/benchmark-akurasi-ekstraksi-2026-11-02.md).
 
 ### Mode server
 

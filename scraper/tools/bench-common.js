@@ -8,10 +8,10 @@ import { GoScraperProcess } from './go-scraper-client.js';
 
 export const ALL_DRIVERS = ['agent-browser', 'cdp', 'playwright'];
 // Driver Go (go-scraper, HTTP tanpa browser) hanya ikut jika diminta lewat `--drivers` (ADR-0005):
-// `go` memakai port extract-article.js, `go-trafilatura` memakai go-trafilatura seperti sistem produksi.
+// `go` memakai port extract-article.js; `go-trafilatura` memilih isi dengan go-trafilatura, aturan lain dari rules.
 const GO_DRIVERS = {
   go: ['-extractor', 'rules'],
-  'go-trafilatura': ['-extractor', 'trafilatura', '-extract-time'],
+  'go-trafilatura': ['-extractor', 'trafilatura'],
 };
 const silentLogger = { info() {}, warn() {}, error() {} };
 

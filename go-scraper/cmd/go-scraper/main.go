@@ -85,16 +85,15 @@ func runExtract(args []string) error {
 	fs := flag.NewFlagSet("extract", flag.ExitOnError)
 	var c common
 	c.register(fs)
-	extractorName := fs.String("extractor", "rules", "rules (port extract-article.js) atau trafilatura")
+	extractorName := fs.String("extractor", "rules", "rules (port extract-article.js) atau trafilatura (isi dari go-trafilatura, aturan lain dari rules)")
 	focus := fs.String("focus", "balanced", "trafilatura: balanced, precision, atau recall")
 	fallback := fs.Bool("fallback", true, "trafilatura: pakai go-readability dan go-domdistiller jika hasil meragukan")
-	extractTime := fs.Bool("extract-time", false, "trafilatura: ambil jam terbit, bukan hanya tanggal")
 	maxPages := fs.Int("max-pages", domain.DefaultPageOptions.MaxPages, "halaman artikel maksimum yang diikuti")
 	preferAll := fs.Bool("prefer-all-page", domain.DefaultPageOptions.PreferAllPage, "utamakan versi \"tampilkan semua\"")
 	delay := fs.Duration("delay", 1500*time.Millisecond, "jeda antar-URL saat URL diberikan sebagai argumen")
 	fs.Parse(args)
 
-	extractor, err := newExtractor(*extractorName, *focus, *fallback, *extractTime)
+	extractor, err := newExtractor(*extractorName, *focus, *fallback)
 	if err != nil {
 		return err
 	}
@@ -145,12 +144,12 @@ func runExtract(args []string) error {
 	return nil
 }
 
-func newExtractor(name, focus string, fallback, extractTime bool) (pagereader.Extractor, error) {
+func newExtractor(name, focus string, fallback bool) (pagereader.Extractor, error) {
 	switch name {
 	case "rules":
 		return rules.Extractor{}, nil
 	case "trafilatura":
-		e := trafilatura.Extractor{Fallback: fallback, ExtractTime: extractTime}
+		e := trafilatura.Extractor{Fallback: fallback}
 		switch focus {
 		case "balanced":
 			e.Focus = gotrafilatura.Balanced

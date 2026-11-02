@@ -9,9 +9,25 @@ go-scraper hanya dipakai untuk benchmark: tidak mengirim webhook, tidak menyimpa
 | `-extractor` | Isi | Dipakai untuk |
 |---|---|---|
 | `rules` (default) | Port 1:1 [`extract-article.js`](../scraper/src/infrastructure/browser/scripts/extract-article.js): JSON-LD → OpenGraph → DOM, daftar selector + skor kepadatan paragraf, filter elemen dan baris bukan berita, gambar lazy-load, pagination | Mengukur selisih browser vs tanpa browser dengan aturan yang sama |
-| `trafilatura` | [`markusmobius/go-trafilatura`](https://github.com/markusmobius/go-trafilatura) v1.12.2, seperti sistem produksi berbasis Go | Mengukur sistem produksi apa adanya |
+| `trafilatura` | [`markusmobius/go-trafilatura`](https://github.com/markusmobius/go-trafilatura) v1.12.2 hanya untuk memilih **wadah** isi artikel. Langkahnya: (1) elemen sampah dibuang dengan filter elemen `rules`; (2) go-trafilatura dijalankan; (3) dicari elemen terkecil di DOM asli yang memuat ≥90% kata hasilnya, tanpa `<h1>`, diutamakan elemen dari daftar selector `rules` jika memuat ≥80%; (4) teks elemen itu dibaca dengan cara `rules`, termasuk pembersih `extract/clean`. Metadata, gambar, dan pagination dari `rules` | Membandingkan performa pendekatan sistem produksi Go (go-trafilatura plus penanganan metadata dan sampah sendiri) dengan hasil yang disamakan |
 
-Kedua ekstraktor memakai deteksi pagination dan usecase `ScrapeArticle` yang sama.
+Kedua ekstraktor memakai deteksi pagination, pembersih teks `extract/clean`, dan usecase `ScrapeArticle` yang sama.
+
+**Pembersih teks (`extract/clean`)** menjalankan 11 aturan dari data sistem produksi:
+
+1. kode redaksi `(lil/sfr)` di ujung paragraf;
+2. `[Gambas:…]`;
+3. spasi sebelum tanda baca;
+4. dateline `<Kota>, CNN/CNBC Indonesia -` di awal teks;
+5. spasi di dalam kurung;
+6. disclaimer TradingView;
+7. "Baca juga" / "Lihat Juga" beserta judul yang menempel;
+8. promo video Investinglive;
+9. promo Telegram (ikut terpotong aturan 6);
+10. `Magazine:` di ujung teks;
+11. kredit `Foto:`.
+
+Aturan yang sama ada di bagian "Pembersihan teks" `extract-article.js`; contoh-contoh di `clean_test.go` menghasilkan keluaran yang sama di kedua bahasa.
 
 ## Struktur (clean architecture)
 
@@ -25,7 +41,8 @@ internal/infrastructure/
   extract/dom/                     padanan API DOM browser (querySelector, textContent, innerText)
   extract/pagination/              port bagian pagination extract-article.js
   extract/rules/                   port extract-article.js
-  extract/trafilatura/             adapter go-trafilatura
+  extract/clean/                   pembersih teks sampah (11 aturan produksi), dipakai rules dan trafilatura
+  extract/trafilatura/             adapter go-trafilatura (memilih wadah isi; teks, metadata, dan sampah dengan aturan rules)
   feed/                            RSS/Atom dengan gofeed v1.4.2
 ```
 
@@ -64,7 +81,6 @@ echo '{"url":"https://example.com/berita/1","max_pages":5,"prefer_all_page":fals
 | `-delay` | `1.5s` | Jeda antar-URL jika URL diberikan sebagai argumen |
 | `-focus` | `balanced` | Khusus `trafilatura`: `balanced`, `precision`, atau `recall` |
 | `-fallback` | `true` | Khusus `trafilatura`: pakai go-readability dan go-domdistiller jika hasil meragukan |
-| `-extract-time` | `false` | Khusus `trafilatura`: ambil jam terbit; default go-trafilatura hanya mengambil tanggal |
 
 Setiap baris keluaran berbentuk `{"url": "...", "article": {...}}` atau `{"url": "...", "error": "..."}`.
 
@@ -75,7 +91,7 @@ Setiap baris keluaran berbentuk `{"url": "...", "article": {...}}` atau `{"url":
 
 ## Benchmark bersama scraper Bun
 
-go-scraper ikut alat benchmark scraper Bun sebagai driver `go` (ekstraktor `rules`) dan `go-trafilatura` (ekstraktor `trafilatura` dengan `-extract-time`). `maxPages` dan `preferAllPage` setiap sumber diteruskan per URL.
+go-scraper ikut alat benchmark scraper Bun sebagai driver `go` (ekstraktor `rules`) dan `go-trafilatura` (ekstraktor `trafilatura`). `maxPages` dan `preferAllPage` setiap sumber diteruskan per URL.
 
 ```bash
 cd scraper

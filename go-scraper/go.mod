@@ -4,7 +4,6 @@ go 1.26.4
 
 require (
 	github.com/andybalholm/cascadia v1.3.2
-	github.com/markusmobius/go-htmldate v1.9.1
 	github.com/markusmobius/go-trafilatura v1.12.2
 	github.com/mmcdole/gofeed v1.4.2
 	golang.org/x/net v0.57.0
@@ -23,6 +22,7 @@ require (
 	github.com/jalaali/go-jalaali v0.0.0-20210801064154-80525e88d958 // indirect
 	github.com/markusmobius/go-dateparser v1.2.3 // indirect
 	github.com/markusmobius/go-domdistiller v0.0.0-20240926050704-25b8d046ffb4 // indirect
+	github.com/markusmobius/go-htmldate v1.9.1 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mmcdole/goxpp/v2 v2.0.0 // indirect
