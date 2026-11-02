@@ -1,7 +1,7 @@
 # Laporan: Akurasi Ekstraksi dan Performa Driver Browser
 
 - **Tanggal:** 2 November 2026
-- **Lingkup:** `scraper/` (commit `5e5f8c8`)
+- **Lingkup:** `scraper/` (commit [`5e5f8c8`](https://github.com/adehikmatfr/news-scrap/commit/5e5f8c8))
 - **Rincian:** [ADR-0003](../adr/0003-driver-browser-agent-browser-playwright-atau-cdp.md) · [ADR-0004 (ditolak)](../adr/0004-ekstraksi-artikel-dengan-hermes-agent.md) · [benchmark akurasi](../reserch/benchmark-akurasi-ekstraksi-2026-11-02.md) · [benchmark driver](../reserch/benchmark-driver-browser-2026-11-02.md)
 
 ## Ringkasan
@@ -10,7 +10,6 @@
 - **Judul, tanggal terbit, dan penulis 100% cocok** dengan yang tampil di halaman asli.
 - **Pilihan driver tidak memengaruhi akurasi.** agent-browser, Playwright, dan CDP Bun menghasilkan isi yang sama.
 - **Pilihan driver sangat memengaruhi kecepatan:** median per artikel 25,3 dtk (agent-browser) vs 0,6 dtk (CDP Bun) vs 0,3 dtk (Playwright).
-- **Rekomendasi:** jadikan **CDP Bun** kandidat driver default (tanpa dependency, tanpa npm di server), setelah lolos uji jalan 24 jam. Default saat ini masih agent-browser.
 - **Ekstraksi dengan AI agent (Hermes) ditolak:** akurasinya sama, tetapi 40–55 dtk dan ±$0,05 per artikel, butuh akses shell untuk backend yang andal, dan terbentur izin penerbit (bagian 4).
 
 ## 1. Akurasi
@@ -111,7 +110,20 @@ Recall / precision dalam persen.
 
 ## 5. Risiko dan batasan
 
-- **Sampel kecil:** 3 artikel per sumber, satu kali pengukuran, di laptop Windows. Performa di server Linux dengan situs sungguhan belum diukur.
-- **Performa diukur sebelum ekstraktor diubah.** Ekstraktor baru melakukan lebih banyak pemeriksaan DOM; dampaknya pada waktu belum diukur ulang (diperkirakan kecil dibanding waktu muat halaman).
 - **Izin penerbit:** footer antaranews melarang pengindeksan otomatis untuk AI tanpa izin tertulis; robots.txt tempo memasang `ai-train=no`. Pemakaian produksi perlu dipastikan izinnya.
+
+## Sumber
+
+Repo: [github.com/adehikmatfr/news-scrap](https://github.com/adehikmatfr/news-scrap)
+
+| Dokumen / kode | Isi |
+|---|---|
+| [ADR-0003: driver browser](../adr/0003-driver-browser-agent-browser-playwright-atau-cdp.md) | Pilihan driver lewat `BROWSER_DRIVER`, spike Windows/Linux, sandbox |
+| [ADR-0004: Hermes Agent (ditolak)](../adr/0004-ekstraksi-artikel-dengan-hermes-agent.md) | Data spike Hermes dan alasan penolakan |
+| [Benchmark akurasi ekstraksi](../reserch/benchmark-akurasi-ekstraksi-2026-11-02.md) | Data lengkap bagian 1, per artikel dan per sumber |
+| [Benchmark driver browser](../reserch/benchmark-driver-browser-2026-11-02.md) | Data lengkap bagian 2: waktu, memori, kegagalan |
+| [`extract-article.js`](../../scraper/src/infrastructure/browser/scripts/extract-article.js) | Ekstraktor yang dipakai ketiga driver |
+| [`agent-browser-cli.js`](../../scraper/src/infrastructure/browser/agent-browser-cli.js) · [`cdp-driver.js`](../../scraper/src/infrastructure/browser/cdp-driver.js) · [`playwright-driver.js`](../../scraper/src/infrastructure/browser/playwright-driver.js) | Implementasi ketiga driver |
+| [`compare-with-source.js`](../../scraper/tools/compare-with-source.js) | Alat ukur akurasi (`bun run bench:accuracy`) |
+| [`compare-drivers.js`](../../scraper/tools/compare-drivers.js) | Alat ukur performa (`bun run bench`) |
 
